@@ -1,0 +1,1 @@
+To support a multi-PC setup for my university's Super Smash Bros. Ultimate tournament streams, I've created a simple GitHub repo that both our stream and management PC are connected to. The management 

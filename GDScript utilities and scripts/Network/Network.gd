@@ -54,8 +54,7 @@ static func initialize() -> void:
 	@warning_ignore("assert_always_true")
 	assert(Events.EVENTMAX < 257, "Number of events must fit into a single u8, but EVENTMAX is currently %s, which implies there are 256 or more events."%[Events.EVENTMAX])
 	@warning_ignore("assert_always_true")
-	assert(NetworkPacket.PACKET_TYPE_MAX < 257, "Number of packet types must fit into a single u8, but PACKET_TYPE_MAX is currently %s, which implies there are 256 or more packet types."%[NetworkPacket.PACKET_TYPE_MAX])
-	QuackMultiplayer.register_all_scripts()
+	assert(NetworkPacket.PACKET_TYPE_MAX < 257, "Number of packet types must fit into a single u8, but PACKET_TYPE_MAX is currently %s, which implies there are 256 or more packet types."%[NetworkPacket.PACKET_TYPE_MAX
 	server_browser_util.begin_broadcasting_as_client.call_deferred()
 	server_browser_util.begin_listening.call_deferred()
 

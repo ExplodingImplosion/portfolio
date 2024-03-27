@@ -5,7 +5,7 @@ const net_updated_this_frame: String = "net_updated_this_frame"
 enum {DISCONNECTED = -1, HOST, SERVER}
 const localhost = 'localhost'
 const loopback = '127.0.0.1'
-enum {DEFAULT_PORT = 25565, DEFAULT_BROWSER_PORT = 42069, DEFAULT_LOCAL_BROWSER_PORT = 25566}
+enum {DEFAULT_PORT = 25565}
 
 const sheila: String = "73.234.173.172"
 
@@ -21,6 +21,8 @@ static var connected_to_sheila: bool
 static var input_buffer_size: int
 static var worldstate_buffer_size: int
 static var packet_buffer_size: int
+
+static var server_browser_util: ServerBrowserUtil = ServerBrowserUtil.new()
 
 ## Used in [method update_net_receive_time] to calculate the
 ## [member delta_time_net_receive] by updating to [method Time.get_ticks_usec],
@@ -53,7 +55,9 @@ static func initialize() -> void:
 	assert(Events.EVENTMAX < 257, "Number of events must fit into a single u8, but EVENTMAX is currently %s, which implies there are 256 or more events."%[Events.EVENTMAX])
 	@warning_ignore("assert_always_true")
 	assert(NetworkPacket.PACKET_TYPE_MAX < 257, "Number of packet types must fit into a single u8, but PACKET_TYPE_MAX is currently %s, which implies there are 256 or more packet types."%[NetworkPacket.PACKET_TYPE_MAX])
-#	QuackMultiplayer.register_all_scripts()
+	QuackMultiplayer.register_all_scripts()
+	server_browser_util.begin_broadcasting_as_client.call_deferred()
+	server_browser_util.begin_listening.call_deferred()
 
 static func get_mp() -> MultiplayerAPI:
 	return Quack.get_mp()
@@ -74,8 +78,12 @@ _snapshot_tickrate: int, port: int) -> void:
 		Tickrate.set_physics_simulation_rate(tickrate)
 	reset_if_connected()
 	setup_new_peer(MultiplayerPeer.TARGET_PEER_BROADCAST)
-	peer.create_server(port,max_clients)
-	Console.write("Created server on port %s\nMax players: %s\nMax spectators: %s\nMax clients: %s\nTickrate: %s\nMap: %s"%
+	var err: Error = peer.create_server(port,max_clients)
+	if err != OK:
+		Console.write("Failed to create server on port %s. Error %s."%[port,error_string(err)])
+		return reset()
+	else:
+		Console.write("Created server on port %s\nMax players: %s\nMax spectators: %s\nMax clients: %s\nTickrate: %s\nMap: %s"%
 	[port,max_players,max_spectators,max_clients,tickrate,map_filepath])
 	setup_server_connections()
 	assign_multiplayer_peer(peer)
@@ -83,6 +91,11 @@ _snapshot_tickrate: int, port: int) -> void:
 	GameState.max_players = max_players
 	GameState.max_spectators = max_spectators
 	GameState.max_clients = max_clients
+	#server_browser_util.stop_listening() # maybe don't, so that ppl can look for other games
+	server_browser_util.stop_broadcasting()
+	server_browser_util.begin_broadcasting(
+		ServerBrowserUtil.create_selfserver_packet(port)
+	)
 
 static func create_dedicated_server(map_filepath: String, max_players: int, max_spectators: int,
 tickrate: int, snapshot_tickrate: int, port: int) -> void:
@@ -246,13 +259,13 @@ static func send_packet_to_peer(peer_id: int, packet: PackedByteArray, transfer_
 	# that checks for and prints errors
 
 static func get_max_command_frame_rate() -> int:
-	return ProjectSettings.get_setting(COMMAND_FRAME_RATE_SETTING_PATH,0)
+	return Quack.get_setting_safe(COMMAND_FRAME_RATE_SETTING_PATH,0)
 
 static func get_preferred_buffer_size() -> int:
-	return ProjectSettings.get_setting(PREFERRED_BUFFER_SIZE_SETTING_PATH,0)
+	return Quack.get_setting_safe(PREFERRED_BUFFER_SIZE_SETTING_PATH,0)
 
 static func get_max_send_bandwidth() -> int:
-	return ProjectSettings.get_setting(MAX_SEND_BANDWIDTH_SETTING_PATH,0)
+	return Quack.get_setting_safe(MAX_SEND_BANDWIDTH_SETTING_PATH,0)
 
 static func get_max_receive_bandwidth() -> int:
-	return ProjectSettings.get_setting(MAX_RECEIVE_BANDWIDTH_SETTING_PATH,0)
+	return Quack.get_setting_safe(MAX_RECEIVE_BANDWIDTH_SETTING_PATH,0)

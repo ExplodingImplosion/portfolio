@@ -79,21 +79,21 @@ static func set_max_out_of_focus_fps(max_fps: int) -> void:
 	ProjectSettings.set_setting(OOF_FPS_SETTING,max_fps)
 
 static func get_oof_fps_cap() -> int:
-	return ProjectSettings.get_setting(OOF_FPS_SETTING,60)
+	return Quack.get_setting_safe(OOF_FPS_SETTING,60)
 
 static func get_game_fps_cap() -> int:
-	return ProjectSettings.get_setting(FPS_SETTING,300)
+	return Quack.get_setting_safe(FPS_SETTING,300)
 
 static func get_menu_fps_cap() -> int:
-	return ProjectSettings.get_setting(MENU_FPS_SETTING,144)
+	return Quack.get_setting_safe(MENU_FPS_SETTING,144)
 
 static func initialize_general_settings() -> void:
 	set_render_scale(ProjectSettings.get_setting(RENDER_SCALE_SETTING,1))
 
 static func go_menu_settings() -> void:
 	set_all_window_settings(get_menu_fps_cap(),
-							ProjectSettings.get_setting(MENU_RES_SETTING),
-							ProjectSettings.get_setting(MENU_FULLSCREEN_SETTING),0)
+							Quack.get_setting_safe(MENU_RES_SETTING,DEFAULT_WINDOW_SIZE),
+							Quack.get_setting_safe(MENU_FULLSCREEN_SETTING,WINDOWED),0)
 
 static func set_all_window_settings(max_fps: int, size: Vector2i, fullscreen: int,flags: int) -> void:
 	Engine.set_max_fps(max_fps)
@@ -116,8 +116,8 @@ static func resize_aligned(size: Vector2i) -> void:
 const video_settings_string: String = "Video Settings"
 static func go_game_settings() -> void:
 	set_all_window_settings(get_game_fps_cap(),
-							ProjectSettings.get_setting(RES_SETTING),
-							ProjectSettings.get_setting(FULLSCREEN_SETTING),0)
+							Quack.get_setting_safe(RES_SETTING,DEFAULT_WINDOW_SIZE),
+							Quack.get_setting_safe(FULLSCREEN_SETTING,FULLSCREEN),0)
 
 ## Sets the render scale of the main window. lmao.
 static func set_render_scale(scale: float) -> void:
@@ -143,13 +143,13 @@ static func get_window_title() -> String:
 #	var title: String = ProjectSettings.get_setting("application/config/name","bruh")
 #	return title + DEBUG_IDENTIFIER if OS.is_debug_build() else title
 
-enum {DEFAULT_WINDOW_SIZE_x = 1152,DEFAULT_WINDOW_SIZE_y = 648}
+const DEFAULT_WINDOW_SIZE = Vector2i(1152,648)
 static func on_window_resized() -> void:
 	var root: Viewport = Quack.root
 	for child in root.get_children():
 		if child is Control:
-			child.set_scale(Vector2(root.size.x/float(DEFAULT_WINDOW_SIZE_x),
-									root.size.y/float(DEFAULT_WINDOW_SIZE_y)))
+			child.set_scale(Vector2(root.size.x/float(DEFAULT_WINDOW_SIZE.x),
+									root.size.y/float(DEFAULT_WINDOW_SIZE.y)))
 
 static func get_mouse_position() -> Vector2:
 	return Quack.root.get_mouse_position()

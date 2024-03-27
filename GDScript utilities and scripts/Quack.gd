@@ -70,7 +70,7 @@ func _init() -> void:
 	assert(!Resources.resources.is_empty())
 	Tickrate.initialize()
 	Network.initialize()
-	num_users = ProjectSettings.get_setting(NUM_USERS_SETTING,1)
+	num_users = get_setting_safe(NUM_USERS_SETTING,1)
 	assert_valid_number_of_users()
 	# maybe put this at the end of _ready()?
 	TimeUtils.begin_physics_tracking()
@@ -121,7 +121,9 @@ func _ready() -> void:
 const USER_DIRECTORY: String = "user://"
 const SETTING_FILEPATH: String = "override.cfg"
 func _exit_tree() -> void:
-	ProjectSettings.save_custom(SETTING_FILEPATH)
+	var err := ProjectSettings.save_custom(SETTING_FILEPATH)
+	if err != OK:
+		printerr("Couldn't save settings. Got error %s."%error_string(err))
 
 func setup_filepaths() -> void:
 	@warning_ignore("static_called_on_instance")
@@ -185,7 +187,9 @@ func get_current_camera() -> Camera3D:
 	return root.get_camera_3d()
 
 func change_scene(scene: String) -> void:
-	tree.change_scene_to_file(scene)
+	var gaming: Error = tree.change_scene_to_file(scene)
+	if gaming != OK:
+		breakpoint
 	on_scene_changed.call_deferred()
 
 func change_scene_to_node(node: Node) -> void:
@@ -329,7 +333,7 @@ static func suspend_signal_connection(sig: Signal, callable: Callable, suspensio
 
 func remove_node(node: Node) -> void:
 	var instance_id: int = node.get_instance_id()
-	node.get_parent().remove_child(node)
+	node.get_parent().remove_child.call_deferred(node)
 	removed_nodes[instance_id] = node
 	removed_node_ids[node] = instance_id
 
@@ -346,6 +350,24 @@ func reinsert_node_by_id(instance_id: int, parent: Node) -> void:
 	var node: Node = removed_nodes[instance_id]
 	parent.add_child(node)
 	erase_node_from_dicts(node,instance_id)
+
+func is_removed_node_properly_set_up(node: Node) -> String:
+	if !removed_node_ids.has(node):
+		return "Removed node IDs does not contain an ID for node %s."%node
+	if !removed_nodes.has(removed_node_ids[node]):
+		return "Removed nodes does not contain node %s's ID of %s."%[node,removed_node_ids[node]]
+	if removed_nodes[removed_node_ids[node]] != node:
+		return "Removed nodes node %s matches node %s's ID key of %s."%[removed_nodes[removed_node_ids[node]],node,removed_node_ids[node]]
+	return ""
+
+func free_removed_node(node: Node) -> void:
+	assert(is_removed_node_properly_set_up(node).is_empty(),is_removed_node_properly_set_up(node))
+	node.free()
+	erase_node_from_dicts(node,removed_node_ids[node])
+
+func queue_free_removed_node(node: Node) -> void:
+	node.queue_free()
+	erase_node_from_dicts(node,removed_node_ids[node])
 
 func connect_to_timer(timer_len: float, callable: Callable, flags: int = 0) -> int:
 	return tree.create_timer(timer_len).timeout.connect(callable,flags)
@@ -387,3 +409,10 @@ func await_if_out_of_time(max_frame_frac: float = 0.95,sig: Signal = tree.proces
 	if TimeUtils.get_frame_frac() >= max_frame_frac or Engine.is_in_physics_frame():
 		await sig
 	return true
+
+func get_setting_safe(setting: String, default: Variant) -> Variant:
+	if !ProjectSettings.has_setting(setting):
+		ProjectSettings.set_setting(setting,default)
+		Console.write("Setting %s didn't exist in file, applying and saving as %s."%[setting,default])
+		return default
+	return ProjectSettings.get_setting(setting)

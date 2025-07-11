@@ -1,0 +1,13 @@
+[gd_scene load_steps=2 format=3 uid="uid://i1sjq3yuelkp"]
+
+[ext_resource type="Script" uid="uid://lwlt3fdyvqs3" path="res://interface/classes/quit_confirm.gd" id="1_0sagx"]
+
+[node name="QuitConfirm" type="ConfirmationDialog"]
+title = "Quit the Game?"
+size = Vector2i(304, 120)
+visible = true
+ok_button_text = "Quit"
+dialog_text = "Are you sure you want to quit?"
+script = ExtResource("1_0sagx")
+
+[connection signal="confirmed" from="." to="." method="quit"]

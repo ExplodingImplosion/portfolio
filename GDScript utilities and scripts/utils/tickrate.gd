@@ -40,7 +40,10 @@ static func modify_physics_sim_speed(frac: float) -> void:
 	relative_speed = float(frac_rate) / target_physics_rate
 	Console.writeverb("Frac delta %s, frac rate: %s"%[frac_delta,frac_rate])
 	if frac_rate == Engine.physics_ticks_per_second:
-		assert(frac_delta == Quack.get_physics_process_delta_time(),"frac_delta %s != physics process delta time %s"%[frac_delta, Quack.get_physics_process_delta_time()])
+		# This happens on 120tick
+		if frac_delta != Quack.get_physics_process_delta_time():
+			Console.push_err("frac_delta %s != physics process delta time %s"%[frac_delta, Quack.get_physics_process_delta_time()])
+		#assert(frac_delta == Quack.get_physics_process_delta_time(),"frac_delta %s != physics process delta time %s"%[frac_delta, Quack.get_physics_process_delta_time()])
 	Engine.set_physics_ticks_per_second(frac_rate)
 	assign_time_scale()
 
@@ -87,3 +90,29 @@ static func change_time_scale(scale: float) -> void:
 
 static func assign_time_scale() -> void:
 	Engine.set_time_scale(relative_speed * time_scale)
+
+static func get_jitter_proof_buffer_size() -> int:
+	return int(Quack.TimeUtils.usec_to_seconds(Quack.Network.get_highest_jitter())/physics_delta)
+
+static func adjust_for_buffer_size(buffer_size: int) -> void:
+	var best_buffer_size := clampi(get_jitter_proof_buffer_size(),1,42069)
+	if buffer_size > best_buffer_size:
+		var real_tickrate := Engine.get_physics_ticks_per_second()
+		var target_tickrate := target_physics_rate
+		var sim_speed := relative_speed
+		if float(real_tickrate) / target_tickrate == sim_speed:
+			sim_speed = float(real_tickrate - 1) / target_tickrate
+		sim_speed = clampf(sim_speed,.85,1.)
+		if relative_speed > .85: # Otherwise messes up an assertion
+			modify_physics_sim_speed(sim_speed)
+	elif buffer_size < best_buffer_size:
+		var real_tickrate := Engine.get_physics_ticks_per_second()
+		var target_tickrate := target_physics_rate
+		var sim_speed := relative_speed
+		if float(real_tickrate) / target_tickrate == sim_speed:
+			sim_speed = float(real_tickrate + 1) / target_tickrate
+		sim_speed = clampf(sim_speed,1.,1.15)
+		if relative_speed < 1.15:
+			modify_physics_sim_speed(sim_speed)
+	elif not is_running_at_target_tickrate():
+		reset_physics_sim_speed()

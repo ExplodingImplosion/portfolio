@@ -7,6 +7,7 @@ const Tickrate = Quack.Tickrate
 const TimeUtils = Quack.TimeUtils
 const QuackMultiplayer = Network.QuackMultiplayer
 const ServerBrowser = Network.ServerBrowser
+const Settings = Quack.Settings
 
 const quit_aliases: PackedStringArray = ["exit","stop"]
 static func quit_cmd() -> void:
@@ -59,6 +60,7 @@ static func get_vsync_cmd() -> void:
 
 const change_scene_help = "Changes the current scene to a given filepath."
 static func change_scene_cmd(scene_path: String) -> void:
+	Network.reset_if_connected() # Might come back to bite me
 	Quack.tree.change_scene_to_file(scene_path)
 	Quack.defer_to_next_frame(Quack.on_scene_changed)
 
@@ -68,7 +70,7 @@ static func potato_cmd() -> void:
 	max_fps_cmd(60)
 
 static func setup_perf_overlay() -> CanvasLayer:
-	if ProjectSettings.get_setting_safe("quack/performance_overlay/enabled",false) == false:
+	if Settings.get_setting_safe("quack/performance_overlay/enabled",false) == false:
 		return
 	
 	# Can't do this because Quack isn't initialized yet lmao so im hacking
@@ -90,16 +92,47 @@ static func performance_overlay_cmd() -> void:
 		perf_overlay.queue_free()
 		perf_overlay = null
 
+static func print_perf_overlay_cmd() -> void:
+	if perf_overlay:
+		Console.write(perf_overlay)
+
+static func print_perf_overlay_nl_cmd() -> void:
+	if perf_overlay:
+		Console.write(str(perf_overlay).replacen(", ","\n"))
+
+static func print_perf_overlay_t_cmd() -> void:
+	if perf_overlay:
+		Console.write(str(perf_overlay).replacen(", ","\t"))
+
 const net_menu: PackedScene = preload("res://interface/net_overlay/net_overlay.tscn")
-static var net_overlay: CanvasLayer
+const NetOverlay = preload("res://interface/net_overlay/net_overlay.gd")
+static var net_overlay: NetOverlay
 const net_overlay_aliases: PackedStringArray = ["network_overlay"]
 static func net_overlay_cmd() -> void:
 	if net_overlay == null:
-		net_overlay = net_menu.instantiate()
+		net_overlay = net_menu.instantiate() as NetOverlay
 		Quack.root.add_child(net_overlay)
 	else:
 		net_overlay.queue_free()
 		net_overlay = null
+
+static func advanced_readout_cmd(uid: int) -> void:
+	if net_overlay:
+		if Quack.Network.Serializer.uid_map.has(uid):
+			NetOverlay.AdvancedSerializerReadout.assign(net_overlay.advanced_readouts_parent,uid)
+		else:
+			Console.writerr("UID %s does not exist!"%uid)
+	else:
+		Console.writerr("Net overlay does not exist!")
+
+static func track_serializers_cmd() -> void:
+	if net_overlay:
+		if net_overlay.tracking:
+			net_overlay.untrack_serializers()
+		else:
+			net_overlay.track_serializers()
+	else:
+		Console.writerr("Net overlay does not exist!")
 
 static func toggle_fullscreen_cmd() -> void:
 	WindowUtils.toggle_fullscreen()
@@ -156,7 +189,7 @@ static func get_all_settings_advanced_cmd() -> void:
 			)
 		await Console.await_if_out_of_time()
 
-const get_all_settings_aliases: PackedStringArray = ["get_settings"]
+#const get_all_settings_aliases: PackedStringArray = ["get_settings"]
 static func get_all_settings_cmd() -> void:
 	var properties := ProjectSettings.get_property_list()
 	for property in properties:
@@ -168,8 +201,11 @@ static func get_all_settings_cmd() -> void:
 static func write_setting(setting: String) -> void:
 	Console.write(BBCode.set_color(setting as String + ": ",Color.YELLOW)+BBCode.set_color(str(ProjectSettings.get_setting(setting)),Color.LIGHT_SALMON))
 
-const get_settings_section_aliases: PackedStringArray = ["check_settings","get_settings_s"]
-static func get_settings_section_cmd(section: String) -> void:
+const get_settings_section_aliases: PackedStringArray = ["get_settings","check_settings","get_settings_s"]
+static func get_settings_section_cmd(section: String = "") -> void:
+	if section.is_empty():
+		get_all_settings_cmd()
+		return
 	var properties := ProjectSettings.get_property_list()
 	for property in properties:
 		if (property.name as String).begins_with(section):
@@ -178,8 +214,14 @@ static func get_settings_section_cmd(section: String) -> void:
 
 const time_scale_aliases: PackedStringArray = ["set_time_scale","change_time_scale"]
 const time_scale_auth_only = true
-static func time_scale_cmd(amnt: float) -> void:
-	Engine.set_time_scale(amnt)
+static func time_scale_cmd(amnt: float = 0.) -> void:
+	if amnt <= 0.:
+		get_time_scale_cmd()
+		return
+	Tickrate.change_time_scale(amnt)
+
+static func get_time_scale_cmd() -> void:
+	Console.write("Engine time scale is %s"%Engine.time_scale)
 
 static func reset_time_scale_cmd() -> void:
 	time_scale_cmd(1)
@@ -234,16 +276,32 @@ static func print_mem_verbose_cmd() -> void:
 static func inst2dict2array(node: Node) -> Array:
 	return inst_to_dict(node).values()
 
+const DeathComponent = preload("res://gameplay/player/death_component.gd")
+#const kill_auth_only = true
 const kill_aliases: PackedStringArray = ["kill_me"]
-static func kill_cmd() -> void:
-	pass
+static func kill_cmd(remote_sender_id: int) -> void:
+	var player := get_player(remote_sender_id)
+	if player and player is PlayerCharacter:
+		if DeathComponent.component_list.has(player as PlayerCharacter):
+			DeathComponent.component_list[player as PlayerCharacter].die()
 
-static func reset_player_health() -> void:
-	pass
+#const reset_player_health_auth_only = true
+static func reset_player_health_cmd(remote_sender_id: int) -> void:
+	var player := get_player(remote_sender_id)
+	if player:
+		if HealthComponent.component_list.has(player):
+			Console.write("Fully healing player %s."%[player.name])
+			var component := HealthComponent.component_list[player]
+			component.set_health(component.max_health)
+		else:
+			Console.writerr("Player %s doesn't have a health component."%player.name)
+	else:
+		Console.writerr("No player to heal.")
 
+#const heal_me_auth_only = true
 const heal_me_aliases: PackedStringArray = ["heal_player"]
-static func heal_me_cmd(amount: int) -> void:
-	var player := get_player()
+static func heal_me_cmd(remote_sender_id: int, amount: int) -> void:
+	var player := get_player(remote_sender_id)
 	if player:
 		if HealthComponent.component_list.has(player):
 			Console.write("Healing player %s for %s."%[player.name,amount])
@@ -253,9 +311,10 @@ static func heal_me_cmd(amount: int) -> void:
 	else:
 		Console.writerr("No player to heal.")
 
+#const hurt_me_auth_only = true
 const hurt_me_aliases: PackedStringArray = ["hurt_player"]
-static func hurt_me_cmd(amount: int) -> void:
-	var player := get_player()
+static func hurt_me_cmd(remote_sender_id: int, amount: int) -> void:
+	var player := get_player(remote_sender_id)
 	if player:
 		if HealthComponent.component_list.has(player):
 			Console.write("Damaging player %s for %s."%[player.name,amount])
@@ -265,10 +324,11 @@ static func hurt_me_cmd(amount: int) -> void:
 	else:
 		Console.writerr("No player to damage.")
 
+#const change_health_by_auth_only = true
 const HealthComponent = preload("res://gameplay/health_component.gd")
 const change_health_by_aliases: PackedStringArray = ["change_health"]
-static func change_health_by_cmd(amount: int) -> void:
-	var player := get_player()
+static func change_health_by_cmd(remote_sender_id: int, amount: int) -> void:
+	var player := get_player(remote_sender_id)
 	if player:
 		if HealthComponent.component_list.has(player):
 			Console.write("Changing player %s health by %s."%[player.name,amount])
@@ -278,8 +338,9 @@ static func change_health_by_cmd(amount: int) -> void:
 	else:
 		Console.writerr("No player to change health of.")
 
-static func set_health_cmd(health: int) -> void:
-	var player := get_player()
+const set_health_auth_only = true
+static func set_health_cmd(remote_sender_id: int, health: int) -> void:
+	var player := get_player(remote_sender_id)
 	if player:
 		if HealthComponent.component_list.has(player):
 			Console.write("Setting player health to %s."%[player.name,health])
@@ -289,27 +350,28 @@ static func set_health_cmd(health: int) -> void:
 	else:
 		Console.writerr("No player to set health of.")
 
-static func respawn_cmd() -> void:
-	Console.write("Respawning player (by restarting the scene lmao)")
-	restart_scene_cmd()
-
 const render_scale_help = "Sets the game's 3D render scale as a factor of 1."
 const render_scale_aliases: PackedStringArray = ["set_render_scale","set_renderscale"]
-static func render_scale_cmd(scale: float) -> void:
+static func render_scale_cmd(scale: float = -1.) -> void:
+	if scale == -1.:
+		Console.write("Render scale is currently %s."%snappedf(WindowUtils.get_render_scale(),.001))
+		return
 	WindowUtils.set_render_scale(scale)
 
 const Audio = preload("res://utils/audio.gd")
 const set_volume_help = "Sets the game's master volume as a factor of 1."
-const set_volume_aliases: PackedStringArray = ["volume","master_volume","set_master_volume"]
-static func set_volume_cmd(scale: float) -> void:
+const set_volume_aliases: PackedStringArray = ["set_volume","master_volume","set_master_volume"]
+static func volume_cmd(scale: float = -1.) -> void:
+	if scale == -1.:
+		Console.write("Volume is currently %s%."%snappedf(100.*Audio.get_volume(),.001))
+		return
 	Audio.set_volume(scale)
 	#Audio.change_master_volume(scale)
 
 const upnp_test_aliases: PackedStringArray = ["test_upnp"]
 const upnp_test_debug_only = true
 static func upnp_test_cmd() -> void:
-	var upnp_thread := Thread.new()
-	upnp_thread.start(upnp_test)
+	ThreadUtils.add_thread(upnp_test)
 	Console.write("Starting UPnP test...")
 
 static func upnp_test() -> void:
@@ -317,21 +379,29 @@ static func upnp_test() -> void:
 	upnp.discover()
 	var _devices: Array[UPNPDevice] = []
 	var _gateway: UPNPDevice = upnp.get_gateway()
-	Console.write("UPnP device detected.") if upnp.get_device_count() > 0 else Console.write("No UPnP device detected.")
+	Console.write.call_deferred("UPnP device detected." if upnp.get_device_count() > 0 else "No UPnP device detected.")
 
 static func helpstringhack() -> String:
 	return help_string
 static var help_string = "
 Enter commands by typing a command name. If a command accepts arguments, type arguments using spaces to separate them.\n\nTo show a list of all comands, use the command " + BBCode.set_color("show_commands",Color.CYAN)+".
 
-For information about a specific command, use the command "+BBCode.set_color("help_command",Color.CYAN)+" with the command you'd like information about as its argument.
+For information about a specific command, use the command "+BBCode.set_color("help",Color.CYAN)+" with the command you'd like information about as its argument.
 
 For information about all commands, use the command "+BBCode.set_color("help_advanced",Color.CYAN)+".
 
 "
 const help_help = "( ͡° ͜ʖ ͡°)"
-static func help_cmd() -> void:
-	Console.write(help_string)
+const help_varadic_reason = "command names"
+static func help_cmd(...args) -> void:
+	if args.is_empty():
+		Console.write(help_string)
+	else:
+		for arg in args:
+			if arg is String:
+				specific_command_help(arg)
+			else:
+				Console.push_warn("%s is a %s, not a valid string."%[arg,type_string(typeof(arg))])
 
 const show_commands_aliases: PackedStringArray = ["show_all_commands","get_commands","commands", "show_c","print_commands","print_c","show_all_c","print_all_c"]
 static func show_commands_cmd() -> void:
@@ -341,9 +411,7 @@ static func show_commands_cmd() -> void:
 		await Console.await_if_out_of_time()
 	Console.write("\nInput help [command] for more details about a specific command. Input help_advanced for more details about all commands.")
 
-const help_comand_help = "Prints advanced help information about the supplied console command."
-const help_command_aliases: PackedStringArray = ["help_cmd","help_c"]
-static func help_command_cmd(command_string: String) -> void:
+static func specific_command_help(command_string: String) -> void:
 	
 	var command: Console.CommandInfo = Console.command_string_map.get(command_string)
 	if command == null:
@@ -357,13 +425,36 @@ static func help_command_cmd(command_string: String) -> void:
 		Console.write(BBCode.set_color(command.help_string,Color.PINK))
 	
 	if command.auth_only:
-		Console.write(BBCode.set_color("Host only",Color.INDIAN_RED))
+		Console.write(BBCode.set_color("Host only.",Color.INDIAN_RED))
+	
+	if command.accept_remote:
+		Console.write(BBCode.set_color("Callable remotely.",Color.LIGHT_SEA_GREEN))
 	
 	# Write command arguments
 	if command.has_args():
-		Console.write(BBCode.set_color("Arguments:",Color.CHOCOLATE))
-		for arg in command.args_info:
-			Console.write("%s%s (%s)"%[Console.indent_string,arg[0],arg[1]])
+		var num_default_args: int = command.default_args.size()
+		if command.num_args:
+			Console.write(BBCode.set_color("Arguments:",Color.CHOCOLATE))
+			var i: int = 0
+			for arg in command.args_info:
+				Console.write("%s%s (%s)%s"%[Console.indent_string,arg[0],arg[1]," (Optional)" if command.num_args-num_default_args <= i else "" ])
+				i += 1
+		if num_default_args:
+			Console.write(BBCode.set_color("Optional arguments default values:",Color.CHOCOLATE))
+			var arg: Variant
+			var le_wrap: String = ""
+			for i in num_default_args:
+				arg = command.default_args[i]
+				if str(arg) == "":
+					le_wrap = "\""
+				else:
+					le_wrap = ""
+				Console.write(Console.indent_string+command.args_info[command.num_args-num_default_args+i][0]+" =",le_wrap+BBCode.set_color_by_type(arg)+le_wrap)
+		if command.varadic:
+			if command.varadic_reason.is_empty():
+				Console.write("Takes unlimited %soptional arguments."%("additional " if command.num_args else ""))
+			else:
+				Console.write("Takes unlimited %s%s as optional arguments."%["additional " if command.num_args else "",command.varadic_reason])
 	else:
 		Console.write(BBCode.set_color("No arguments.",Color.GREEN*0.9))
 	
@@ -375,6 +466,10 @@ static func help_command_cmd(command_string: String) -> void:
 		for alias in command.get_aliases():
 			Console.write(Console.indent_string+BBCode.set_color(alias,Color.CYAN * 0.7))
 
+static func get_shortcuts_cmd() -> void:
+	for shortcut in Console.shortcuts:
+		get_binds_cmd(shortcut)
+
 const help_advanced_help = "Prints advanced help information about all console commands. Equivalent of executing 'help_command' on every console command."
 const help_advanced_aliases: PackedStringArray = ["show_commands_advanced","show_aliases","show_commands_and_aliases"]
 static func help_advanced_cmd() -> void:
@@ -383,7 +478,7 @@ static func help_advanced_cmd() -> void:
 	Console.writeln()
 	for i in num_commands:
 		command = Console.commands[i]
-		help_command_cmd(command.get_command_name())
+		specific_command_help(command.get_command_name())
 		# write 2 newlines until last command
 		if i < num_commands - 1:
 			Console.writeln()
@@ -480,6 +575,37 @@ static func get_playable_levels() -> PackedStringArray:
 				levels.append(folder+"/"+file)
 	return levels
 
+const get_networked_node_types_debug_only = true
+static var networked_nodes: Array[NetworkedNode]
+static func get_networked_node_types_cmd() -> void:
+	if networked_nodes.is_empty(): get_networked_node_types_at("res://gameplay/",networked_nodes)
+	for config in networked_nodes:
+		await write_networked_node_type(config)
+
+static func write_networked_node_type(config: NetworkedNode) -> bool:
+	Console.write_in_color("%s [%s]:"%[config.resource_name,config.resource_path],Color.CHOCOLATE)
+	await write_script_properties(config,["properties"])
+	Console.colored_writevar(config.properties)
+	Console.writeln()
+	await Console.await_if_out_of_time()
+	return true
+
+const get_networked_node_type_debug_only = true
+static func get_networked_node_type_cmd(type: String) -> void:
+	if networked_nodes.is_empty(): get_networked_node_types_at("res://gameplay/",networked_nodes)
+	for config in networked_nodes:
+		if config.resource_path.containsn(type):
+			await write_networked_node_type(config)
+
+static func get_networked_node_types_at(dir: String, nodes: Array[NetworkedNode]) -> void:
+	var fname: String
+	for file in DirAccess.get_files_at(dir):
+		fname = dir.path_join(file)
+		if ResourceLoader.exists(fname,"NetworkedNode"):
+			nodes.append(load(fname))
+	for subdir in DirAccess.get_directories_at(dir):
+		get_networked_node_types_at(dir.path_join(subdir),nodes)
+
 static func level_exists(level_name: String) -> int:
 	for i in playable_levels.size():
 		var level := playable_levels[i]
@@ -494,14 +620,14 @@ static func get_playable_levels_cmd() -> void:
 
 static func reload_levels_cmd() -> void:
 	playable_levels = get_playable_levels()
-
-const play_defer_launch_arg = true
-static func play_cmd(levelname: String) -> void:
-	play_custom_cmd(levelname,Engine.physics_ticks_per_second)
+	Console.write("Playable levels reloaded.")
 
 const LEVEL_DIRECTORY_PLUS = "res://gameplay/level/levels/%s"
-const play_custom_defer_launch_arg = true
-static func play_custom_cmd(level_name: String,tickrate: int) -> void:
+const play_defer_launch_arg = true
+static func play_cmd(level_name: String, tickrate: int = 0) -> void:
+	await Network.await_packets_ready()
+	if tickrate < 1:
+		tickrate = Engine.physics_ticks_per_second
 	Console.push_warn("Normally would check if resources are ready here")
 	#if !Resources.resources_ready:
 		#return Console.writerr("Can't start a game yet! Resources haven't been fully loaded.")
@@ -513,9 +639,25 @@ static func play_custom_cmd(level_name: String,tickrate: int) -> void:
 	Network.reset_if_connected()
 	Quack.change_scene(LEVEL_DIRECTORY_PLUS%playable_levels[level_idx])
 
+const create_server_defer_launch_arg = true
+static func create_server_cmd(level_name: String, tickrate: int = 0, snapshot_tickrate := -1, max_players := 20, max_spectators := 4, port: int = Network.DEFAULT_PORT) -> void:
+	if tickrate < 1:
+		tickrate = Engine.physics_ticks_per_second
+	var level_idx := level_exists(level_name)
+	if level_idx == -1:
+		return Console.writerr("Level %s does not exist!"%level_name)
+	Network.create_dedicated_server(LEVEL_DIRECTORY_PLUS%playable_levels[level_idx],max_players,max_spectators,tickrate,snapshot_tickrate,port)
+
+
 const host_defer_launch_arg = true
-static func host_cmd(level_name: String) -> void:
-	host_custom_cmd(level_name,Engine.physics_ticks_per_second)
+static func host_cmd(level_name: String, tickrate: int = 0, snapshot_tickrate := -1, max_players := 20, max_spectators := 4, port: int = Network.DEFAULT_PORT) -> void:
+	if tickrate < 1:
+		tickrate = Engine.physics_ticks_per_second
+	var level_idx := level_exists(level_name)
+	if level_idx == -1:
+		return Console.writerr("Level %s does not exist!"%level_name)
+	Network.host(LEVEL_DIRECTORY_PLUS%playable_levels[level_idx],max_players,max_spectators,tickrate,snapshot_tickrate,port)
+
 const reset_window_soft_help = "Sets the game's main window to windowed mode, resets its size to default, and centers it on its current screen."
 static func reset_window_soft_cmd() -> void:
 	var root: Window = Quack.root
@@ -524,17 +666,20 @@ static func reset_window_soft_cmd() -> void:
 	root.size = root.content_scale_size
 	root.position = DisplayServer.screen_get_size(root.get_current_screen())/2 - root.size/2
 
-const host_custom_defer_launch_arg = true
-static func host_custom_cmd(level_name: String, tickrate: int) -> void:
-	var level_idx := level_exists(level_name)
-	if level_idx == -1:
-		return Console.writerr("Level %s does not exist!"%level_name)
-	Network.host(LEVEL_DIRECTORY_PLUS%playable_levels[level_idx],20,4,tickrate,-1,Network.DEFAULT_PORT)
 const sensitive_info_warning_string = "WARNING: CAREFUL BEFORE USING THIS COMMAND WHILE SCREEN IS VISIBLE! SENSITIVE INFORMATION CAN BE EXPOSED!"
-
-const get_ip_help = "Prints the device's IPV4 address. %s"%sensitive_info_warning_string
+const get_ip_help = "Prints the device's IPv4 address. %s"%sensitive_info_warning_string
 static func get_ip_cmd() -> void:
 	Console.write("Local IPv4: " + Network.get_hostname_desktop())
+
+const get_public_ip_debug_only = true
+const get_public_ip_help = "Prints the device's PUBLIC IPv4 address, or IPv6 if the argument true is passed. %s"%sensitive_info_warning_string
+static func get_public_ip_cmd(ipv6: bool = false) -> void:
+	if ipv6:
+		if Network.pub_ipv6.is_empty():
+			await Network.ConnectivityTester.get_public_ip(ipv6)
+	elif Network.pub_ipv4.is_empty():
+		await Network.ConnectivityTester.get_public_ip(ipv6)
+	Console.write("Public %s: "%("IPv6" if ipv6 else "IPv4") + BBCode.set_color_by_type(Network.pub_ipv6 if ipv6 else Network.pub_ipv4))
 
 const get_all_ip_help = "Prints every local address of the device. %s"%sensitive_info_warning_string
 static func get_all_ip_cmd() -> void:
@@ -542,6 +687,34 @@ static func get_all_ip_cmd() -> void:
 	Console.write("List of all local addresses:")
 	for addy in local_addys:
 		Console.write(addy)
+
+const get_connect_command_aliases: PackedStringArray = ["get_connect_cmd","get_connect_code"]
+const get_connect_command_auth_only = true
+const get_connect_command_debug_only = true
+const get_connect_command_help = "Prints a command to connect to the current hosted game over the internet. %s"%sensitive_info_warning_string
+static func get_connect_command_cmd(ipv6: bool = false) -> void:
+	var v4: bool = not ipv6
+	# This is really inelegant and stupid lololololololol
+	if ipv6:
+		if Network.pub_ipv6.is_empty():
+			await Network.ConnectivityTester.get_public_ip(true)
+			if Network.pub_ipv6.is_empty():
+				Console.writerr("Checking public IPv6 address failed. Trying to get public IPv4 address...")
+				if Network.pub_ipv4.is_empty():
+					await Network.ConnectivityTester.get_public_ip()
+					if Network.pub_ipv4.is_empty():
+						return Console.writerr("Checking public IPv4 address failed.")
+			v4 = true
+	elif Network.pub_ipv4.is_empty():
+		await Network.ConnectivityTester.get_public_ip()
+		if Network.pub_ipv4.is_empty():
+			Console.writerr("Checking public IPv4 address failed. Trying to get public IPv6 address...")
+			if Network.pub_ipv6.is_empty():
+				await Network.ConnectivityTester.get_public_ip(true)
+				if Network.pub_ipv6.is_empty():
+					return Console.writerr("Checking public IPv6 address failed.")
+			v4 = false
+	Console.write("\nConnect code:\n\n%s\n\n"%BBCode.set_color("connect_with_port %s %s"%[Network.pub_ipv4 if v4 else Network.pub_ipv6,Network.peer.host.get_local_port()],Color.GREEN))
 
 const get_all_interfaces_help = "Prints every network adapter of the device. %s"%sensitive_info_warning_string
 const get_all_interfaces_aliases: PackedStringArray = ["get_interfaces"]
@@ -551,12 +724,8 @@ static func get_all_interfaces_cmd() -> void:
 	write_array_of_dicts(interfaces,Console.text_max_frame_duration_before_deferrment)
 
 const connect_help = "Tries to connect a game session to the supplied IP address using the game's default gameplay port."
-static func connect_cmd(ip: String) -> void:
-	Network.connect_to_server(ip,Network.DEFAULT_PORT)
-
-const connect_with_port_help = "Tries to connect to a game session with the supplied IP address and port."
-static func connect_with_port_cmd(ip: String, port: int) -> void:
-	Network.connect_to_server(ip,port)
+static func connect_cmd(ip: String, port: int = Network.DEFAULT_PORT, listen_port: int = 0) -> void:
+	Network.connect_to_server(ip,port,listen_port)
 
 const disconnect_help = "Disconnects from the current game session, if any exists. Also can be used to shut down game session while hosting, or to return to main menu from other scenes, including singleplayer levels."
 static func disconnect_cmd() -> void:
@@ -570,24 +739,37 @@ static func get_func_length(nodepath: String, function: String) -> void:
 	@warning_ignore("static_called_on_instance")
 	Console.write(str(Quack.get_func_length(Callable(Quack.root.get_node(NodePath(nodepath)),function))))
 
-const pingtest_all_help = "Executes pingtest command on all available peers."
-func pingtest_all_cmd() -> void:
+static func pingtest_all() -> void:
 	if Network.is_server():
 		Console.write("Pinging all peers...")
 		Console.receive_pingtest.rpc()
 		Console.ping_start_time = Time.get_ticks_usec()
 
-const pingtest_help = "Pings the supplied peer's console and calculates their latency, in microseconds"
-static func pingtest_cmd(peer: int) -> void:
+const ping_test_varadic_reason = "peer IDs"
+const ping_test_help = "Pings the supplied peers' console and calculates their latency, in microseconds. If no peer is supplied, pings all connected peers."
+static func ping_test_cmd(...peers) -> void:
+	if peers.is_empty():
+		if Network.is_server():
+			pingtest_all()
+		else:
+			pingtest(Network.SERVER)
+	else:
+		for peer:int in peers:
+			pingtest(peer)
+
+static func pingtest(peer: int) -> void:
 	if peer == Network.SERVER or Network.is_server():
 		Console.write("Pinging peer %s"%[peer])
 		Console.receive_pingtest.rpc_id(peer)
 		Console.ping_start_time = Time.get_ticks_usec()
 
-const sens_help = "Sets the player's 3D camera mouse sensitivity, in [INSERT CORRECT UNIT OF MEASUREMENT HERE]"
+const sens_help = "Sets the player's 3D camera mouse sensitivity, in hundreths of degrees. E.g. A sensitivity of 5 changes the player's camera angle by 0.05 degrees every time a mouse input is registered."
 const sens_aliases: PackedStringArray = ["sensitivity","change_sensitivity","set_sensitivity","change_sens","set_sens"]
 static func sens_cmd(sens: float) -> void:
 	Inputs.change_sens(sens)
+
+static func c_sens_cmd(sens: float) -> void:
+	Inputs.change_csens(sens)
 
 const net_info_string = "Auth frame signature: %s
 Input signature: %s
@@ -667,48 +849,74 @@ static func get_net_info_verbose_cmd(client: int) -> void:
 
 const change_tickrate_aliases: PackedStringArray = ["set_tickrate","tickrate","change_physics_simulation_rate"]
 const change_tickrate_auth_only = true
-static func change_tickrate_cmd(rate: int) -> void:
+static func change_tickrate_cmd(rate: int = 0) -> void:
+	if rate <= 0:
+		Console.write("Current tickrate: %s"%Tickrate.target_physics_rate)
+		return
 	Tickrate.set_physics_simulation_rate(rate)
 
+const slow_mo_auth_only = true
+static func slow_mo_cmd(frac: float) -> void:
+	@warning_ignore("narrowing_conversion")
+	# kinda dumb and overcomplicated to get this as a setting but idk maybe it
+	# makes things slightly more intuitive if someone changes the tickrate project
+	# setting
+	var tickrate := clampi((ProjectSettings.get_setting("physics/common/physics_ticks_per_second",60) as int * frac) as int,1,42069)
+	Tickrate.set_physics_simulation_rate(tickrate)
+	Tickrate.change_time_scale(frac)
+	Console.write("Going %sx slowmo, timescale of %s and tickrate of %s."%[frac,frac,tickrate])
+
+const connect_debug_debug_only = true
 static func connect_debug_cmd(ip: String) -> void:
 	if !NetDebug.lag_faker_active():
 		NetDebug.start_lag_faker(ip)
 	connect_cmd(ip)
 
 const start_net_debugger_aliases: PackedStringArray = ["start_lag_faker"]
+const start_net_debugger_debug_only = true
 static func start_net_debugger_cmd() -> void:
 	if Network.multiplayer_connected():
 		return Console.writerr("Cannot start debugger while connected to multiplayer.")
 	NetDebug.start_lag_faker()
 
+static func write_lag_faker_not_running() -> void:
+	Console.write("No lag faker currently running.")
+
+const store_packets_debug_only = true
 static func store_packets_cmd() -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
-	lag_faker.store_packets = !lag_faker.store_packets
+	if !lag_faker: return write_lag_faker_not_running()
+	var newval := !lag_faker.store_packets
+	lag_faker.store_packets = newval
+	Console.write("Storing packets." if newval else "No longer storing packets.")
 
-static func print_in_packets_cmd() -> void:
+const lf_print_in_packets_debug_only = true
+static func lf_print_in_packets_cmd() -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	Console.write("In packets:")
 	for packet in lag_faker.in_queue.history:
 		Console.write(packet._to_string())
 		await Console.await_if_out_of_time()
 
+const print_in_packets_on_receive_debug_only = true
 static func print_in_packets_on_receive_cmd() -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	Console.write("Toggling printing of in packets when received...")
 	lag_faker.print_in_queue = !lag_faker.print_in_queue
 
+const print_out_packets_on_send_debug_only = true
 static func print_out_packets_on_send_cmd() -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	Console.write("Toggling printing of out packets when sent...")
 	lag_faker.print_out_queue = !lag_faker.print_out_queue
 
-static func print_out_packets_cmd() -> void:
+const lf_print_out_packets_debug_only = true
+static func lf_print_out_packets_cmd() -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	Console.write("Out packets:")
 	for packet in lag_faker.out_queue.history:
 		Console.write(packet._to_string())
@@ -717,92 +925,105 @@ static func print_out_packets_cmd() -> void:
 static func try_get_lag_faker() -> NetDebug.LagFaker:
 	if !NetDebug.get_lag_faker():
 		start_net_debugger_cmd()
-		return NetDebug.get_lag_faker()
-	else:
-		return NetDebug.get_lag_faker()
+	return NetDebug.get_lag_faker()
 
 const stop_net_debugger_aliases: PackedStringArray = ["stop_lag_faker"]
+const stop_net_debugger_debug_only = true
 static func stop_net_debugger_cmd() -> void:
 	if Network.multiplayer_connected():
 		return Console.writerr("Cannot end debugger while connected to multiplayer.")
 	NetDebug.stop_lag_faker()
 
+const fake_lag_debug_only = true
 static func fake_lag_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.set_min_latency(TimeUtils.msecf_to_usec(amount))
 
+const fake_jitter_debug_only = true
 static func fake_jitter_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.set_jitter(TimeUtils.msecf_to_usec(amount))
 	lag_faker.set_jitter_variance(1.)
 
+const fake_loss_debug_only = true
 static func fake_loss_cmd(frequency: int) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.set_loss(frequency)
 
+const fake_lag_client_debug_only = true
 static func fake_lag_client_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.client_params.fake_min_latency_usec = TimeUtils.msecf_to_usec(amount)
 
+const fake_lag_server_debug_only = true
 static func fake_lag_server_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.server_params.fake_min_latency_usec = TimeUtils.msecf_to_usec(amount)
 
+const fake_jitter_client_debug_only = true
 static func fake_jitter_client_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.client_params.fake_jitter_usec = TimeUtils.msecf_to_usec(amount)
 
+const fake_jitter_server_debug_only = true
 static func fake_jitter_server_cmd(amount: float) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.server_params.fake_jitter_usec = TimeUtils.msecf_to_usec(amount)
 
 const packet_loss_curve_path = "res://Utilities/Packet Loss Sin Curve.tres"
 
+const use_packet_loss_curve_debug_only = true
 static func use_packet_loss_curve_cmd() -> void:
 	var lag_faker := NetDebug.get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	lag_faker.set_loss_curve(packet_loss_curve_path)
 
+const use_packet_jitter_curve_debug_only = true
 static func use_packet_jitter_curve_cmd() -> void:
 	var lag_faker := NetDebug.get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	lag_faker.set_jitter_curve(packet_loss_curve_path)
 
+const fake_loss_client_debug_only = true
 static func fake_loss_client_cmd(frequency: int) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.client_params.fake_loss = frequency
 
+const fake_loss_server_debug_only = true
 static func fake_loss_server_cmd(frequency: int) -> void:
 	var lag_faker := try_get_lag_faker()
-	if !lag_faker: return
+	if !lag_faker: return write_lag_faker_not_running()
 	
 	lag_faker.server_params.fake_loss = frequency
 
-static func write_script_properties(object: Object,exceptions: PackedStringArray = [],prefix: String = "") -> void:
+static func write_script_properties(object: Object,exceptions: PackedStringArray = [],prefix: String = "") -> bool:
 	for property in object.get_property_list():
 		if QuackMultiplayer.is_script_variable(property) and !exceptions.has(property.name):
-			Console.write(prefix+property.name+": "+str(object[property.name]))
+			Console.colored_desc(prefix+property.name,object[property.name])
+			await Console.await_if_out_of_time()
+	return true
 
 const reload_console_commands_aliases: PackedStringArray = ["reload_console","refresh_commands","refresh_console"]
 const reload_console_commands_debug_only = true
 static func reload_console_commands_cmd() -> void:
 	Console.reload_commands()
+	Console.write("Console commands reloaded.")
 const get_all_classes_info_debug_only = true
 static func get_all_classes_info_cmd() -> void:
 	var global_class_list: Array[Dictionary] = ProjectSettings.get_global_class_list()
@@ -882,8 +1103,7 @@ static func connect_local_cmd(idx: int) -> void:
 		return Console.write("No available servers on local network.")
 	idx = clampi(idx,1,servers.size())
 	var server: ServerBrowser.ServerInfo = servers[servers.keys()[idx-1]]
-	connect_with_port_cmd(server.ip,server.port)
-
+	connect_cmd(server.ip,server.port)
 
 const bind_help = "Binds the supplied button to the supplied action, if it exists, OR binds the supplied button to a supplied console command in place of an action. For instance, a regular action bind can be created as follows: 'bind B ui_back' will execute the action 'ui_back' whenever the B key is pressed. A command bind can be created as follows: 'bind Q quit' will execute the command 'quit' whenever the Q key is pressed."
 static func bind_cmd(button: String, action: String) -> void:
@@ -904,14 +1124,15 @@ const get_actions_help = "Prints every action in the game, including custom comm
 static func get_actions_cmd() -> void:
 	Console.write("All actions:")
 	for action in InputMap.get_actions():
-		Console.writevar(action)
+		Console.write(action)
 		await Console.await_if_out_of_time()
 	Console.writeln()
 
 const get_binds_help = "Prints all of the binds of the supplied action, or executes the command 'get_all_binds' if no action is supplied."
-static func get_binds_cmd(action: String) -> void:
+static func get_binds_cmd(action: String = "") -> void:
 	if action.is_empty():
-		return get_all_binds_cmd()
+		get_all_binds_cmd()
+		return
 	var actn := StringName(action)
 	if InputMap.has_action(actn):
 		Console.write(BBCode.set_color("Events bound to action %s:"%action,Color.PLUM))
@@ -970,25 +1191,27 @@ static func unbind_button_cmd(button: String) -> void:
 	Inputs.remove_key_from_all_actions(button)
 
 static func get_args_cmd() -> void:
-	Console.writevar(OS.get_cmdline_args())
+	Console.write(OS.get_cmdline_args())
 
 static func get_user_args_cmd() -> void:
-	Console.writevar(OS.get_cmdline_user_args())
+	Console.write(OS.get_cmdline_user_args())
 
 static func get_all_args_cmd() -> void:
 	var args := OS.get_cmdline_args()
 	args.append(" ++ ")
 	args.append_array(OS.get_cmdline_user_args())
-	Console.writevar(args)
+	Console.write(args)
 
-const restart_help = "Restarts the game."
-static func restart_cmd() -> void:
-	OS.set_restart_on_exit(true,OS.get_cmdline_args() + dasharray + OS.get_cmdline_user_args())
+const restart_help = "Restarts the game. If any arguments are supplied, they replace the previous command line arguments the game launched with."
+static func restart_cmd(...args) -> void:
+	var cmdline_args: PackedStringArray = OS.get_cmdline_args() + dasharray + OS.get_cmdline_user_args() if args.is_empty() else PackedStringArray(args)
+	OS.set_restart_on_exit(true,cmdline_args)
 	quit_cmd()
 
-const restartv_help = "Restarts the game with the --verbose launch option."
-static func restartv_cmd() -> void:
-	OS.set_restart_on_exit(true,OS.get_cmdline_args()+PackedStringArray(["--verbose"])+dasharray+OS.get_cmdline_user_args())
+const restartv_help = "Restarts the game with the --verbose launch option. If any arguments are supplied, they replace the previous command line arguments the game launched with."
+static func restartv_cmd(...args) -> void:
+	var cmdline_args: PackedStringArray = OS.get_cmdline_args() + dasharray + OS.get_cmdline_user_args() if args.is_empty() else PackedStringArray(args)
+	OS.set_restart_on_exit(true,PackedStringArray(["--verbose"])+cmdline_args)
 	quit_cmd()
 
 const dasharray: PackedStringArray = ["--"]
@@ -1023,7 +1246,7 @@ static func save_editor_cmd() -> void:
 		else:
 			Console.write("Saved settings to %s."%BBCode.set_color("project.godot",Color.YELLOW))
 
-static func windowpos_cmd(x: int, y: int) -> void:
+static func window_pos_cmd(x: int, y: int) -> void:
 	Quack.root.initial_position = Window.WINDOW_INITIAL_POSITION_ABSOLUTE
 	Quack.root.position = Vector2i(x,y)
 
@@ -1046,7 +1269,7 @@ static func freecam_cmd() -> void:
 			#Quack.tree.current_scene.add_child(FreeCam.new())
 
 static func register_splitscreen_actions_cmd(player_idx: int) -> void:
-	var idx: int = clampi(player_idx-1,1,3)
+	var idx: int = clampi(player_idx-1,1,7)
 	Console.write("Adding splitscreen actions for player %s."%(idx+1))
 	Inputs.register_actions_for_splitscreen_player(idx)
 
@@ -1059,6 +1282,7 @@ static func restart_scene_cmd() -> void:
 	var path := Quack.tree.current_scene.scene_file_path
 	if path.is_empty():
 		return Console.writerr("Can't restart scene when current scene does not come from a packed scene file.")
+	Network.reset_if_connected() # Might come back to bite me
 	Console.write("Restarting scene %s..."%path)
 	Quack.change_scene(path)
 
@@ -1068,48 +1292,76 @@ const PlayerCharacter = preload("res://gameplay/player/player_character.gd")
 const OwnerID = preload("res://gameplay/owner_id.gd")
 const InventoryComponent = preload("res://gameplay/player/inventory_component.gd")
 const give_rocket_launcher_aliases: PackedStringArray = ["give_rl"]
-const give_rocket_launcher_auth_only = true
-static func give_rocket_launcher_cmd() -> void:
-	try_give_player_item(rocket_launcher_scene)
+#const give_rocket_launcher_auth_only = true
+static func give_rocket_launcher_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, rocket_launcher_scene)
 
 const double_barrel_rl_scene = preload("res://gameplay/item/double_barrel_rl/double_barrel_rl.tscn")
 const give_double_barrel_rocket_launcher_aliases: PackedStringArray = ["give_db","give_double_barrel_rl","give_db_rl","give_double_barrel"]
 const give_double_barrel_rocket_launcher_auth_only = true
-static func give_double_barrel_rocket_launcher_cmd() -> void:
-	try_give_player_item(double_barrel_rl_scene)
+static func give_double_barrel_rocket_launcher_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, double_barrel_rl_scene)
 
 const quad_rl_scene = preload("res://gameplay/item/quad_barrel_rl/quad_barrel_rl.tscn")
 const give_quad_barrel_rocket_launcher_aliases: PackedStringArray = ["give_quad_barrel_rl","give_quad_rocket","give_quad_rocket_launcher","give_quad_rl","give_4_rl"]
 const give_quad_barrel_rocket_launcher_auth_only = true
-static func give_quad_barrel_rocket_launcher_cmd() -> void:
-	try_give_player_item(quad_rl_scene)
+static func give_quad_barrel_rocket_launcher_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, quad_rl_scene)
 
 const m16_scene = preload("res://gameplay/item/m16/m16.tscn")
 const give_m16_auth_only = true
-static func give_m16_cmd() -> void:
-	try_give_player_item(m16_scene)
+static func give_m16_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, m16_scene)
+
+const glocc_scene = preload("res://gameplay/item/glocc/glocc.tscn")
+#const give_glocc_auth_only = true
+const give_glocc_aliases: PackedStringArray = ["give_glock"]
+static func give_glocc_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, glocc_scene)
+
+const glocccc_scene = preload("res://gameplay/item/glocccc/glocccc.tscn")
+const give_extendo_auth_only = true
+static func give_extendo_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, glocccc_scene)
 
 const quickscope_scene = preload("res://gameplay/item/quickscope_sniper/quickscope_sniper.tscn")
 const give_quickscope_inator_aliases: PackedStringArray = ["give_quickscope","give_quickscoper","give_quickscope_gun","give_quickscope_sniper"]
 const give_quickscope_inator_auth_only = true
-static func give_quickscope_inator_cmd() -> void:
-	try_give_player_item(quickscope_scene)
+static func give_quickscope_inator_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, quickscope_scene)
 
 const knife_scene = preload("res://gameplay/item/knife/knife.tscn")
 const give_knife_auth_only = true
-static func give_knife_cmd() -> void:
-	try_give_player_item(knife_scene)
+static func give_knife_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, knife_scene)
 
 const shotgun_scene = preload("res://gameplay/item/pump_shotgun/pump_shotgun.tscn")
 const give_shotgun_auth_only = true
-static func give_shotgun_cmd() -> void:
-	try_give_player_item(shotgun_scene)
+static func give_shotgun_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, shotgun_scene)
 
-static func get_player() -> Node:
+const deagle_scene = preload("res://gameplay/item/deagle/deagle.tscn")
+const give_deagle_auth_only = true
+static func give_deagle_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, deagle_scene)
+
+static func get_player(id: int) -> Node:
 	if !Quack.tree.has_group(&"Player"):
 		Console.writerr("No player to give item to.")
 		return null
-	return Quack.tree.get_first_node_in_group(&"Player")
+	var player := MultiplayerSession.players.get(id) as MultiplayerSession.Player
+	if not player:
+		Console.writerr("No player %s."%id)
+		return null
+	var player_stringname := StringName(str(player.id))
+	if not Quack.tree.has_group(player_stringname):
+		Console.writerr("Player %s has no owned nodes."%player_stringname)
+		return null
+	for node in Quack.tree.get_nodes_in_group(player_stringname):
+		if node.is_in_group(&"Player"):
+			return node
+	Console.writerr("Player %s has no owned player nodes."%player_stringname)
+	return null
 
 const AmmoComponent = preload("res://gameplay/item/shared/ammo_component.gd")
 static func give_player_item(player: PlayerCharacter, item: Weapon) -> void:
@@ -1117,16 +1369,15 @@ static func give_player_item(player: PlayerCharacter, item: Weapon) -> void:
 	Quack.get_current_scene().add_child(item)
 	Console.write("Equipping %s..."%item.name)
 	var ic := InventoryComponent.component_list[player]
-	ic.weapon_removed.connect(free_node,CONNECT_REFERENCE_COUNTED)
 	AmmoComponent.try_fill_mag(item)
 	ic.add_weapon(item)
 	item.reset_physics_interpolation.call_deferred()
 
-static func free_node(node: Node) -> void:
-	node.queue_free()
+#static func free_node(node: Node) -> void:
+	#node.queue_free()
 
-static func try_give_player_item(scene: PackedScene) -> void:
-	var player := get_player()
+static func try_give_player_item(id: int, scene: PackedScene) -> void:
+	var player := get_player(id)
 	if player == null: return
 	var item: Weapon = scene.instantiate() as Weapon
 	if player is PlayerCharacter:
@@ -1134,20 +1385,21 @@ static func try_give_player_item(scene: PackedScene) -> void:
 
 const spoon_scene = preload("res://gameplay/item/spoon/spoon.tscn")
 const give_spoon_auth_only = true
-static func give_spoon_cmd() -> void:
-	try_give_player_item(spoon_scene)
+static func give_spoon_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, spoon_scene)
 
 const spiker_scene = preload("res://gameplay/item/spiker/spiker.tscn")
 const give_spiker_auth_only = true
-static func give_spiker_cmd() -> void:
-	try_give_player_item(spiker_scene)
+static func give_spiker_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, spiker_scene)
 
 const smg_scene = preload("res://gameplay/item/smg/smg.tscn")
 const give_smg_auth_only = true
-static func give_smg_cmd() -> void:
-	try_give_player_item(smg_scene)
+static func give_smg_cmd(remote_sender_id: int) -> void:
+	try_give_player_item(remote_sender_id, smg_scene)
 
-const GodotMovePlayer = preload("res://gameplay/player/godot_move_player.tscn")
+#const GodotMovePlayer = preload("res://gameplay/player/godot_move_player.tscn")
+const TFMovePlayer = preload("res://gameplay/player/tf_move_player.tscn")
 const spawn_dummy_auth_only = true
 static func spawn_dummy_cmd() -> void:
 	if !Quack.tree.has_group(&"Player"): return Console.writerr("No player to spawn dummy above.")
@@ -1155,7 +1407,7 @@ static func spawn_dummy_cmd() -> void:
 	if not player is Node3D: return Console.writerr("Player isn't a Node3D lmao")
 	var pos: Vector3 = (player as Node3D).global_position+Vector3(0,10,0)
 	Console.write("Spawning dummy at %s."%pos)
-	var dummy: PlayerCharacter = GodotMovePlayer.instantiate() as PlayerCharacter
+	var dummy: PlayerCharacter = TFMovePlayer.instantiate() as PlayerCharacter
 	QuackMultiplayer.set_node_position_on_ready(dummy,pos)
 	dummy.ready.connect(dummy.force_update_transform)
 	dummy.reset_physics_interpolation.call_deferred()
@@ -1211,6 +1463,7 @@ static func test_dmg_num_cmd(dmg: float) -> void:
 
 const get_sensitivity_aliases: PackedStringArray = ["get_sens"]
 static func get_sensitivity_cmd() -> void:
+	@warning_ignore("static_called_on_instance")
 	Console.write("Sensitivity: %s"%Inputs.getsens())
 
 #static func checkrl_cmd() -> void:
@@ -1272,9 +1525,10 @@ static func convert_tf2_sens_cmd(sens: float) -> void:
 static func convert_sens(sens: float, yaw: float, string: String) -> void:
 	Console.write((sens_convert_string_base+string+".")%[BBCode.set_color(str(100.*(yaw*sens)),Color.GREEN),sens])
 
+#const noclip_auth_only = true
 const NoclipComponent = preload("res://gameplay/player/noclip_component.gd")
-static func noclip_cmd() -> void:
-	var player := get_player()
+static func noclip_cmd(remote_sender_id: int) -> void:
+	var player := get_player(remote_sender_id)
 	if player and player is PlayerCharacter:
 		toggle_noclip(player as PlayerCharacter)
 
@@ -1288,12 +1542,455 @@ static func toggle_noclip(player: PlayerCharacter) -> void:
 
 const GodotMoveComponent = preload("res://gameplay/player/godot_move_component.gd")
 const CrouchComponent = preload("res://gameplay/player/crouch_component.gd")
+const TFMoveComponent = preload("res://gameplay/player/tf_move_component.gd")
 static func toggle_component_modes(player: PlayerCharacter, process_mode: Node.ProcessMode) -> void:
-	# This would be more "flexible" but would slow tf down if theres hella players
-	#for node in Quack.get_nodes_in_group(&"player_movement"):
-		#if node.get_parent() == player:
-			#node.set_process_mode(process_mode)
-	if GodotMoveComponent.component_list.has(player):
+	if TFMoveComponent.component_list.has(player):
+		TFMoveComponent.component_list[player].set_process_mode(process_mode)
+	elif GodotMoveComponent.component_list.has(player):
 		GodotMoveComponent.component_list[player].set_process_mode(process_mode)
 	if CrouchComponent.component_list.has(player):
 		CrouchComponent.component_list[player].set_process_mode(process_mode)
+
+const NetworkPackets = preload("res://network/packets/packet.gd")
+const NetworkPacketTypes = NetworkPackets.PacketType
+const get_packet_types_debug_only = true
+const get_packet_types_aliases: PackedStringArray = ["print_packet_types","check_packet_types"]
+static func get_packet_types_cmd() -> void:
+	Console.write_in_color("\nServer --> Client packets:",Color.CYAN)
+	var i: int = 0
+	for type in NetworkPacketTypes.client_packets.type_list:
+		Console.write("%s\n%s\n"%[
+			NetworkPacketTypes.client_packets.debug_name_list[i],type
+		])
+		i += 1
+		await Console.await_if_out_of_time()
+	Console.write_in_color("Client --> Server packets:",Color.CYAN)
+	i = 0
+	for type in NetworkPacketTypes.server_packets.type_list:
+		Console.write("%s\n%s\n"%[
+			NetworkPacketTypes.server_packets.debug_name_list[i],type
+		])
+		i += 1
+		await Console.await_if_out_of_time()
+
+const reload_packet_types_debug_only = true
+static func reload_packet_types_cmd() -> void:
+	Console.write("Resetting packet types...")
+	NetworkPacketTypes.client_packets = Network.NetworkPackets.PacketTypeCollection.new()
+	NetworkPacketTypes.server_packets = Network.NetworkPackets.PacketTypeCollection.new()
+	NetworkPacketTypes.collection_list = [
+		NetworkPacketTypes.client_packets,
+		NetworkPacketTypes.server_packets
+	]
+	Console.write("Reloading packet types...")
+	NetworkPacketTypes.setup_packet_map()
+	Console.write("Packet types reloaded.")
+
+const PacketTracker = preload("res://network/packet_tracker.gd")
+const packet_tracker_filepath = "res://packet_dump.pckt"
+const track_packets_debug_only = true
+const track_packets_defer_launch_arg = true
+static var packet_tracker: PacketTracker
+static func track_packets_cmd() -> void:
+	if packet_tracker:
+		(Quack.get_mp() as SceneMultiplayer).peer_packet.disconnect(packet_tracker.add_packet)
+		Console.write("Saving %s packets and shutting down packet tracker."%packet_tracker.packets.size())
+		packet_tracker.save(packet_tracker_filepath)
+		packet_tracker = null
+	else:
+		Console.write("Starting up packet tracker...")
+		packet_tracker = PacketTracker.new(0)
+		(Quack.get_mp() as SceneMultiplayer).peer_packet.connect(packet_tracker.add_packet)
+
+const dump_packets_debug_only = true
+static func dump_packets_cmd() -> void:
+	if packet_tracker:
+		Console.write("Dumping %s packets."%packet_tracker.packets.size())
+		packet_tracker.save(packet_tracker_filepath)
+
+const check_packets_debug_only = true
+static func check_packets_cmd() -> void:
+	while NetworkPacketTypes.ready == false:
+		await Quack.tree.process_frame
+	for packet in PacketTracker.get_packets(packet_tracker_filepath):
+		var packet_type := NetworkPacketTypes.client_packets.type_list[packet[0]]
+		var decoded := packet_type.packet_decode(packet.slice(1))
+		Console.write(str(decoded))
+		if decoded is Network.NetworkPackets.WorldStatePacket:
+			var buffer := Network.NetworkPackets.StreamPeerBitBuffer.decode(
+				(decoded as Network.NetworkPackets.WorldStatePacket).contents
+			)
+			Console.write(buffer)
+			Console.write(buffer.get_bools_as_array())
+			Console.write(buffer.get_non_bools(false))
+		Console.writeln()
+
+const MultiplayerSession = preload("res://network/multiplayer/multiplayer_session.gd")
+const replay_packets_debug_only = true
+static func replay_packets_cmd() -> void:
+	Network.treat_as_non_auth = true
+	var packets := PacketTracker.get_packets(packet_tracker_filepath)
+	MultiplayerSession.add_local_client(1)
+	Console.write("Replaying %s packets..."%packets.size())
+	for packet in packets:
+		var packet_type := NetworkPacketTypes.client_packets.type_list[packet[0]]
+		var decoded := packet_type.packet_decode(packet.slice(1))
+		Console.write("Executing %s..."%[decoded])
+		decoded._execute(1)
+		match packet[0]:
+			1: # unless this gets changed this will be server info packet
+				# lmao
+				for i in 5:
+					await Quack.tree.process_frame
+			0: # unless this gets changed this will be worldstate packet
+				await Quack.tree.physics_frame
+	Console.write("All packets executed.")
+
+const delete_uid_debug_only = true
+const delete_uid_auth_only = true
+static func delete_uid_cmd(uid: int) -> void:
+	if Network.Serializer.uid_map.has(uid):
+		var node := Network.Serializer.uid_map[uid].owner
+		Console.write("Deleting node %s with UID %s..."%[
+			node.name,uid
+		])
+		node.queue_free()
+	else:
+		Console.writerr("Can't delete node with UID %s. UID isn't present."%uid)
+
+const spawn_scene_debug_only = true
+const spawn_scene_auth_only = true
+static func spawn_scene_cmd(scene_id: int) -> void:
+	if Quack.is_3D_scene():
+		if QuackMultiplayer.scenes.size() > scene_id and scene_id >= 0:
+			var scene := QuackMultiplayer.scenes[scene_id]
+			var node := scene.instantiate()
+			Console.write("Spawning scene %s (ID %s)..."%[
+				scene.resource_path,scene_id
+			])
+			Quack.get_current_scene().add_child(node)
+		else:
+			Console.writerr("Scene ID %s is invalid."%scene_id)
+	else:
+		Console.writerr("Can't spawn scene while not in a 3D scene.")
+
+const print_scenes_debug_only = true
+static func print_scenes_cmd() -> void:
+	var id: int = 0
+	for scene in QuackMultiplayer.scenes:
+		Console.write("%s [%s]"%[BBCode.set_color(scene.resource_path,Color.YELLOW),BBCode.set_color(str(id),Color.CYAN)])
+		id += 1
+		await Console.await_if_out_of_time()
+	
+
+const ThreadUtils = preload("res://utils/thread_utils.gd")
+const check_active_threads_aliases: PackedStringArray = ["get_active_threads","active_threads","view_active_threads","threads","get_threads","check_threads"]
+static func check_active_threads_cmd() -> void:
+	Console.write("%s active threads."%ThreadUtils.threads.size())
+	for i in ThreadUtils.threads.keys():
+		Console.write(i)
+		await Console.await_if_out_of_time()
+
+const get_num_active_threads_aliases: PackedStringArray = ['check_active_thread_count','get_active_thread_count','get_thread_count','num_threads']
+static func get_num_active_threads_cmd() -> void:
+	Console.write("%s active threads."%ThreadUtils.threads.size())
+
+const MultiplayerLevel = NetworkPackets.MultiplayerLevel
+const Compression = NetworkPackets.Compression
+const dump_replay_debug_only = true
+static func dump_replay_cmd() -> void:
+	if Network.is_server():
+		var scene := Quack.get_current_scene()
+		if scene is MultiplayerLevel:
+			ThreadUtils.add_thread((scene as MultiplayerLevel).history_saver.history.save)
+
+const Replay = MultiplayerLevel.Replay
+const REPLAY_FILEPATH = Replay.REPLAY_FILEPATH
+static func load_replay_cmd(filepath: String) -> void:
+	var files := DirAccess.get_files_at(REPLAY_FILEPATH)
+	if files.is_empty():
+		return Console.writerr("No replays available.")
+	var replay := Replay.load_from_file(REPLAY_FILEPATH+filepath)
+	if replay:
+		replay.play()
+		#await replay.finished # Wtf is this here for
+
+const load_replay_debug_debug_only = true
+static func load_replay_debug_cmd(filepath: String, allow_file_hash_mismatch := false) -> void:
+	var files := DirAccess.get_files_at(REPLAY_FILEPATH)
+	if files.is_empty():
+		return Console.writerr("No replays available.")
+	var replay := Replay.load_from_file(REPLAY_FILEPATH+filepath, allow_file_hash_mismatch)
+	if replay:
+		replay.play()
+
+static func load_last_replay_cmd() -> void:
+	var files := DirAccess.get_files_at(REPLAY_FILEPATH)
+	if files.is_empty():
+		return Console.writerr("No replays available.")
+	var fpath := files[-1]
+	Console.write("Opening %s..."%fpath)
+	var replay := Replay.load_from_file(REPLAY_FILEPATH+fpath)
+	if replay:
+		replay.play()
+
+static func get_replays_cmd() -> void:
+	for file in DirAccess.get_files_at(REPLAY_FILEPATH):
+		Console.colored_writevar(file)
+
+static func open_replay_folder_cmd() -> void:
+	var err := OS.shell_show_in_file_manager(ProjectSettings.globalize_path(REPLAY_FILEPATH))
+	if err != OK:
+		Console.push_err("Couldn't open replay folder. Got error %s."%[error_string(err)])
+
+const print_in_packets_debug_only = true
+static func print_in_packets_cmd() -> void:
+	var newval := !NetworkPackets.print_in_packets
+	NetworkPackets.print_in_packets = newval
+	Console.write("Packets received will now be printed." if newval else "Packets received will no longer be printed.")
+
+const print_out_packets_debug_only = true
+static func print_out_packets_cmd() -> void:
+	var newval := !NetworkPackets.print_out_packets
+	NetworkPackets.print_out_packets = newval
+	Console.write("Packets sent will now be printed." if newval else "Packets sent will no longer be printed.")
+
+const print_packets_debug_only = true
+static func print_packets_cmd() -> void:
+	var in_p := NetworkPackets.print_in_packets
+	var out_p := NetworkPackets.print_out_packets
+	if in_p == out_p and in_p: # Both in and out are being printed, turn them off
+		NetworkPackets.print_in_packets = false
+		NetworkPackets.print_out_packets = false
+		Console.write("Packets will no longer be printed.")
+	else: # At least one is not being printed, ensure both on
+		NetworkPackets.print_in_packets = true
+		NetworkPackets.print_out_packets = true
+		Console.write("Packets will now be printed.")
+
+const test_debug_only = true
+static func test_cmd() -> void:
+	if Network.pub_ipv4.is_empty():
+		await Network.ConnectivityTester.get_public_ip()
+	if NetDebug.lag_faker:
+		NetDebug.stop_lag_faker()
+	NetDebug.start_lag_faker(Network.pub_ipv4,8000)
+	var lf := NetDebug.lag_faker
+	var vc := lf.proxy.vclient
+	var ip := Network.pub_ipv4
+	var pckt := PackedByteArray([69,69,69])
+	var port := 8000
+	lf.proxy.vserver.bind_to("*",port)
+	print_in_packets_on_receive_cmd()
+	print_out_packets_on_send_cmd()
+	for i in 65535:
+		var err := vc.target(ip,i)
+		if err != OK:
+			Console.push_err(error_string(err))
+		else:
+			Console.colored_writevar(vc.target_port)
+		lf.out_queue.add(NetDebug.Packet.new(pckt,Time.get_ticks_usec()))
+		await Quack.tree.process_frame
+
+const get_undocumented_commands_debug_only = true
+static func get_undocumented_commands_cmd() -> void:
+	for command in Console.commands:
+		if command.help_string == "":
+			Console.write(command.get_command_name())
+
+const console_force_native_aliases: PackedStringArray = ["force_native_console","native_console","native_console_window","console_native_window","force_native_console_window","force_console_native_window"]
+static func console_force_native_cmd(on: bool = true) -> void:
+	var was_visible := Console.visible
+	if was_visible:
+		Console.disable()
+	Console.force_native = on
+	if was_visible:
+		Console.activate()
+
+const VariableZoomCamera = preload("res://gameplay/player/variable_zoom_camera.gd")
+static func fov_cmd(fov := 0.) -> void:
+	if fov >= 1.0 and fov <= 179.:
+		ProjectSettings.set_setting(VariableZoomCamera.CAMERA_FOV_SETTING,fov)
+	else:
+		Console.write("Current horizontal camera FOV: %s."%[Settings.get_setting_safe(VariableZoomCamera.CAMERA_FOV_SETTING,103.)])
+
+const print_multiplayer_session_debug_only = true
+static func print_multiplayer_session_cmd() -> void:
+	Console.cwritenl(
+		MultiplayerSession.clients,
+		MultiplayerSession.players,
+		MultiplayerSession.local_client,
+		MultiplayerSession.max_players,
+		MultiplayerSession.max_spectators
+	)
+
+const controller_test_debug_only = true
+const controller_test_aliases: PackedStringArray = ["c_test"]
+
+static func controller_test_cmd() -> void:
+	Console.write(Input.get_connected_joypads())
+	for i in Input.get_connected_joypads():
+		Console.write("id  	",i)
+		Console.write('guid	',Input.get_joy_guid(i))
+		Console.write('info	',Input.get_joy_info(i))
+		Console.write('name	',Input.get_joy_name(i))
+
+const num_users_debug_only = true
+static func num_users_cmd(users: int = -1) -> void:
+	if users == -1:
+		Console.write("Num users:",Quack.num_users)
+	else:
+		Quack.num_users = clampi(users,1,8)
+		Console.write("Setting num users to",Quack.num_users)
+
+# This should be renamed to StringifyComponent3D or some shit
+const StringifyComponent = preload("res://utils/stringify_component.gd")
+const StringifyComponentScene = preload("res://utils/stringify_component.tscn")
+const stringify_debug_only = true
+static func stringify_cmd(path: String, update_rate: float = 0., physics: bool = true, process: bool = false, to_str: bool = false, offset: float = 64.) -> void:
+	if path.is_empty():
+		return
+	var nodepath := NodePath(path)
+	if Quack.root.has_node(nodepath):
+		var stringify_component: StringifyComponent = StringifyComponentScene.instantiate() as StringifyComponent
+		stringify_component.update_rate = update_rate
+		stringify_component.physics = physics
+		stringify_component.process = process
+		stringify_component.to_str = to_str
+		stringify_component.offset.y = offset
+		var node: Node = Quack.root.get_node(nodepath)
+		if node is Node3D:
+			Console.write("Adding stringify component to %s."%path)
+			node.add_child(stringify_component)
+		else:
+			Console.writerr("%s is not a 3D node."%path)
+	else:
+		Console.writerr("Path %s does not exist."%path)
+
+const print_tree_debug_only = true
+static func print_tree_cmd(pretty: bool = true) -> void:
+	Console.write(Quack.root.get_tree_string_pretty() if pretty else Quack.root.get_tree_string())
+
+const print_focus_debug_only = true
+static func print_focus_cmd() -> void:
+	var focus_owner := Quack.root.gui_get_focus_owner()
+	Console.write(focus_owner.get_path() as String if focus_owner else "No node is currently focused")
+
+static func physics_interpolation_cmd(onoff: bool = true) -> void:
+	Quack.tree.physics_interpolation = onoff
+	Console.write("Setting physics interpolation to %s."%onoff)
+
+const get_serialized_count_debug_only = true
+static func get_serialized_count_cmd() -> void:
+	Console.write("Number of serialized nodes in scene: %s"%Quack.Network.Serializer.component_list.size())
+
+static func set_frame_cmd(num: int) -> void:
+	if Replay.replay_interface:
+		Replay.replay_interface.go_to_frame(clampi(num,0,Replay.replay_interface.replay.size))
+
+static func get_frame_cmd() -> void:
+	if Replay.replay_interface:
+		Console.write("Current frame is %s."%Replay.replay_interface.replay.current_frame_idx)
+
+static func get_replay_length_cmd() -> void:
+	if Replay.replay_interface:
+		var replay := Replay.replay_interface.replay
+		Console.write("Replay is %ss long (%s frames)."%[
+			(1./replay.tickrate)*float(replay.size),replay.size
+		])
+
+const set_deadzones_aliases: PackedStringArray = ["deadzones","set_deadzone","deadzone"]
+static func set_deadzones_cmd(deadzone: float = .01, player_idx: int = 1, right_stick: bool = true) -> void:
+	player_idx = clampi(player_idx-1,0,7)
+	var suffix: String = "_%s"%player_idx if player_idx else ""
+	var inputs: PackedStringArray = [Inputs.right,Inputs.left,Inputs.forward,Inputs.back] if not right_stick else ["analog_look_up", "analog_look_down", "analog_look_left", "analog_look_right"]
+	for input in inputs:
+		InputMap.action_set_deadzone(input+suffix,deadzone)
+
+const get_deadzones_aliases: PackedStringArray = ["get_deadzone"]
+static func get_deadzones_cmd(player_idx: int = 1, right_stick: bool = true) -> void:
+	player_idx = clampi(player_idx-1,0,7)
+	var suffix: String = "_%s"%player_idx if player_idx else ""
+	var inputs: PackedStringArray = [Inputs.right,Inputs.left,Inputs.forward,Inputs.back] if not right_stick else ["analog_look_up", "analog_look_down", "analog_look_left", "analog_look_right"]
+	for input in inputs:
+		Console.write("Player %s %s:"%[player_idx+1,input.trim_prefix("analog_")])
+		Console.cwrite(InputMap.action_get_deadzone(input+suffix))
+
+static func clear_collision_shapes_cmd() -> void:
+	for node in Quack.tree.get_nodes_in_group(&"Debug Collision Shapes"):
+		node.queue_free()
+
+static func get_connected_clients_cmd() -> void:
+	for id in MultiplayerSession.clients:
+		Console.cwrite(MultiplayerSession.clients[id])
+
+static func set_perfoverlay_client_cmd(id: int) -> void:
+	if perf_overlay and MultiplayerSession.clients.has(id):
+		perf_overlay.client = MultiplayerSession.clients[id]
+
+static func set_perfoverlay_last_client_cmd() -> void:
+	if perf_overlay and not MultiplayerSession.clients.is_empty():
+		perf_overlay.client = MultiplayerSession.clients.values()[-1] as MultiplayerSession.Client
+
+static func affinity_cmd(affinity: int) -> void:
+	if not OS.has_feature("windows"): return Console.writerr("Assigning affinity isn't supported on anything but Windows.")
+	affinity = clampi(affinity,1,255)
+	#var bruh := []
+	var execute := OS.execute(
+		"powershell.exe",
+		[
+			"(Get-Process -Id %s).ProcessorAffinity = %s"%[
+				OS.get_process_id(),affinity
+			]
+		],
+		#bruh,true,true
+	)
+	Console.write("Result code %s."%execute)
+	#Console.cwrite(bruh)
+
+static func priority_cmd(priority: String) -> void:
+	if not OS.has_feature("windows"): return Console.writerr("Assigning affinity isn't supported on anything but Windows.")
+	#var bruh := []
+	var execute := OS.execute(
+		" powershell.exe",
+		[
+			"(Get-Process -Id %s).PriorityClass = %s"%[
+				OS.get_process_id(),priority
+			]
+		],
+		#bruh,true,true
+	)
+	Console.write("Result code %s."%execute)
+	#Console.cwrite(bruh)
+
+static func get_profiled_functions_cmd(physics := true) -> void:
+	(Quack.tree.physics_frame if physics else Quack.tree.process_frame).connect(print_profilers,CONNECT_DEFERRED|CONNECT_ONE_SHOT)
+
+static func print_profilers() -> void:
+	for profiler:Quack.Profiler in Quack.Profiler.profilers.values():
+		Console.cwrite(profiler)
+
+static func get_profiled_functions_verbose_cmd(physics := true) -> void:
+	(Quack.tree.physics_frame if physics else Quack.tree.process_frame).connect(print_profilers_verbose,CONNECT_DEFERRED|CONNECT_ONE_SHOT)
+
+static func print_profilers_verbose() -> void:
+	for profiler:Quack.Profiler in Quack.Profiler.profilers.values():
+		Console.cwrite(profiler,profiler.get_times())
+
+const dump_codegen_debug_only = true
+static func dump_codegen_cmd(id: int = -1, copy := false) -> void:
+	print()
+	var src: String = ""
+	if id == -1 or NetworkedNode.types.size() <= id:
+		for script:GDScript in NetworkedNode.types.values():
+			src += script.source_code
+			for i in 5:
+				src += "\n"
+		print(src)
+	else:
+		src = (NetworkedNode.types.values()[id] as GDScript).source_code
+		print(src)
+		for i in 5:
+			print()
+	if copy:
+		DisplayServer.clipboard_set(src)

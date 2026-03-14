@@ -19,6 +19,7 @@ static func start_lag_faker(target_address: String = Network.get_loopback_hostna
 	if OS.is_debug_build():
 		if lag_faker == null:
 			lag_faker = LagFaker.new(target_address,target_port,Network.get_loopback_hostname(),port)
+			Console.write("Starting network debugger...")
 		else:
 			Console.push_err("Already debugging.")
 	else:
@@ -29,6 +30,7 @@ static func stop_lag_faker() -> void:
 		if lag_faker != null:
 			lag_faker.cleanup()
 			lag_faker = null
+			Console.write("Network debugger stopped.")
 		else:
 			Console.push_err("Not currently debugging.")
 	else:
@@ -46,7 +48,11 @@ class Proxy:
 			target_address,virtual_server_port,target_address,target_port
 		])
 		var bind_err := vserver.bind_to(listen_address,virtual_server_port)
+		if bind_err != OK:
+			Console.push_err("Virtual server binding failed (%s)."%error_string(bind_err))
 		var target_err := change_target(target_address,target_port)
+		if target_err != OK:
+			Console.push_err("Virtual client binding failed (%s)."%error_string(target_err))
 	
 	func cleanup() -> void:
 		vserver.close()
@@ -77,6 +83,7 @@ class ProxyPeer:
 	var target_port: int
 	var target_address: String
 	var has_target: bool
+	const num_port_bind_retry_attempts = 10
 	# PacketPeerUDP has this as a function
 	#var is_bound: bool
 	
@@ -91,14 +98,16 @@ class ProxyPeer:
 		return OK # or try_target or 0
 	
 	func bind_to(address: String, port: int) -> Error:
-		var try_bind: int = bind(port,address)
-		if try_bind != OK:
-			Console.push_err("Couldn't bind to address %s on port %s. %s."%[address,port,error_string(try_bind)])
-			return try_bind
+		var bind_attempt: Error
+		for i in num_port_bind_retry_attempts:
+			bind_attempt = bind(port,address)
+			if bind_attempt == OK:
+				break
+			Console.push_err("Couldn't bind to address %s on port %s. %s."%[address,port,error_string(bind_attempt)])
+			port += 1
 		bound_address = address
 		bound_port = port
-		#is_bound = true
-		return OK # or try_bind or 0
+		return bind_attempt
 	
 	func target_packet_source() -> void:
 		# technically this isn't true, but for the only case I've used it, I don't
@@ -142,7 +151,7 @@ class FakeLagParams:
 	
 	func packet_loss_algo(i: int) -> bool:
 		if fake_loss:
-			return i % fake_loss
+			return i % fake_loss == 0
 		else:
 			return false
 	
@@ -216,10 +225,12 @@ class LagFaker:
 		return proxy.change_target(address,port)
 	
 	func connect_enet_peer(peer: ENetMultiplayerPeer, channel_count: int = 0, in_bandwidth: int = 0, out_bandwidth: int = 0, local_port: int = 0) -> Error:
-		Console.write("Connecting ENetMultiplayerPeer to fake lag virtual at %s on port %s."%[get_virtual_server_address(),get_virtual_server_port()])
-		var err: Error = peer.create_client(get_virtual_server_address(),get_virtual_server_port(),channel_count,in_bandwidth,out_bandwidth,local_port)
+		var vserveraddy := get_virtual_server_address()
+		var vserverport := get_virtual_server_port()
+		Console.write("Connecting ENetMultiplayerPeer to fake lag virtual server at %s on port %s."%[vserveraddy,vserverport])
+		var err: Error = peer.create_client(vserveraddy,vserverport,channel_count,in_bandwidth,out_bandwidth,local_port)
 		if err != OK:
-			Console.write("Creating client failed. Got error %s."%error_string(err))
+			Console.writerr("Creating client failed. Got error %s."%error_string(err))
 			Console.writerrverb("Additional info:\nchannel_count: %s\nin_bandwidth: %s\nout_bandwidth: %s\nlocal_port:%s"%[channel_count,in_bandwidth,out_bandwidth,local_port])
 		return err
 	
@@ -250,7 +261,7 @@ class LagFaker:
 			if notify_in_queue_filled:
 				in_queue_filled.emit()
 			if print_in_queue:
-				Console.write("%s %s"%[in_string,BBCode.set_color(str(in_queue),Color.CYAN)])
+				Console.write("%s %s"%[in_string,BBCode.set_color(str(in_queue),Color.SKY_BLUE)])
 		# processes client packets and sends them to server
 		out_queue.process(proxy.vclient,time,store_packets)
 		# processes server packets and sends them to client
@@ -334,7 +345,9 @@ class Packet:
 	
 	func send(peer: PacketPeerUDP) -> void:
 		send_timestamp_usec = Time.get_ticks_usec()
-		peer.put_packet(packet)
+		var err := peer.put_packet(packet)
+		if err != OK:
+			Console.write("Got error %s putting %sB packet %s from port %s."%[error_string(err),packet.size(),hash(packet),peer.get_local_port()])
 	
 	func _to_string() -> String:
 		return "%s bytes at timestamp %s:

@@ -1,5 +1,6 @@
 const ByteUtils = Quack.ByteUtils
 const TimeUtils = Quack.TimeUtils
+const Splitscreen = Quack.Splitscreen
 
 const DEBUG_WINDOW_SIZE := Vector2i(768, 450)
 const DEBUG_WINDOW_POS := Vector2i(20,40)
@@ -93,13 +94,13 @@ static func set_max_out_of_focus_fps(max_fps: int) -> void:
 	ProjectSettings.set_setting(OOF_FPS_SETTING,max_fps)
 
 static func get_oof_fps_cap() -> int:
-	return ProjectSettings.get_setting_safe(OOF_FPS_SETTING,60)
+	return Quack.Settings.get_setting_safe(OOF_FPS_SETTING,60)
 
 static func get_game_fps_cap() -> int:
-	return ProjectSettings.get_setting_safe(FPS_SETTING,300)
+	return Quack.Settings.get_setting_safe(FPS_SETTING,300)
 
 static func get_menu_fps_cap() -> int:
-	return ProjectSettings.get_setting_safe(MENU_FPS_SETTING,144)
+	return Quack.Settings.get_setting_safe(MENU_FPS_SETTING,144)
 
 static func set_game_res(res: Vector2i) -> void:
 	if Quack.is_3D_scene():
@@ -117,13 +118,14 @@ static func set_res(res: Vector2i) -> void:
 static func initialize_general_settings() -> void:
 	set_render_scale(ProjectSettings.get_setting(RENDER_SCALE_SETTING,1))
 	# Arbitrary, maybe change later
-	Quack.root.min_size = Vector2i(640,360)
+	if Quack.is_exported():
+		Quack.root.min_size = Vector2i(640,360)
 	if ProjectSettings.get_setting("display/window/size/initial_position_type",Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN) as Window.WindowInitialPosition == Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN:
 		default_position = Quack.root.position - (DisplayServer.screen_get_size() - Quack.root.get_size()) / 2
 		assert(DisplayServer.screen_get_size() == DisplayServer.screen_get_size(DisplayServer.get_primary_screen()))
 
 static func go_menu_settings() -> void:
-	var fullscreen: Window.Mode = ProjectSettings.get_setting_safe(MENU_FULLSCREEN_SETTING,Window.MODE_WINDOWED) as Window.Mode
+	var fullscreen: Window.Mode = Quack.Settings.get_setting_safe(MENU_FULLSCREEN_SETTING,Window.MODE_WINDOWED) as Window.Mode
 	set_all_window_settings(
 		get_menu_fps_cap(),
 		get_resolution_setting(MENU_RES_SETTING,fullscreen >= Window.MODE_FULLSCREEN),
@@ -132,7 +134,7 @@ static func go_menu_settings() -> void:
 	)
 
 static func get_resolution_setting(setting: String, fullscreen_res: bool = false) -> Vector2i:
-	var resolution: Vector2i = ProjectSettings.get_setting_safe(setting,AUTO_WINDOW_SIZE if fullscreen_res else DEFAULT_WINDOW_SIZE) as Vector2i
+	var resolution: Vector2i = Quack.Settings.get_setting_safe(setting,AUTO_WINDOW_SIZE if fullscreen_res else DEFAULT_WINDOW_SIZE) as Vector2i
 	if resolution == AUTO_WINDOW_SIZE:
 		return DisplayServer.screen_get_size()
 	else:
@@ -159,7 +161,7 @@ static func recenter(size: Vector2i) -> void:
 
 const video_settings_string: String = "Video Settings"
 static func go_game_settings() -> void:
-	var fullscreen: Window.Mode = ProjectSettings.get_setting_safe(FULLSCREEN_SETTING,Window.MODE_EXCLUSIVE_FULLSCREEN) as Window.Mode
+	var fullscreen: Window.Mode = Quack.Settings.get_setting_safe(FULLSCREEN_SETTING,Window.MODE_EXCLUSIVE_FULLSCREEN) as Window.Mode
 	set_all_window_settings(
 		get_game_fps_cap(),
 		get_resolution_setting(RES_SETTING,fullscreen >= Window.MODE_FULLSCREEN),
@@ -172,11 +174,7 @@ static func set_render_scale(scale: float) -> void:
 	Quack.root.set_scaling_3d_scale(scale)
 	ProjectSettings.set_setting(RENDER_SCALE_SETTING,scale)
 	if Quack.num_users > 1:
-		Console.push_err("lmao set_render_scale used for splitscreen but it didn't work")
-		var viewports :Variant = null#GameState.viewports
-		if viewports == null:
-			return
-		viewports.apply_render_scale_to_viewports(scale)
+		Splitscreen.apply_render_scale(scale)
 
 static func get_render_scale() -> float:
 	return Quack.root.get_scaling_3d_scale()
@@ -208,11 +206,10 @@ static func on_window_resized() -> void:
 		if child is Control:
 			child.set_scale(get_window_scale())
 
-static func get_window_scale() -> Vector2:
-	var root: Viewport = Quack.root
+static func get_window_scale(viewport: Viewport = Quack.root) -> Vector2:
 	return Vector2(
-		root.size.x / float(DEFAULT_WINDOW_SIZE.x),
-		root.size.y / float(DEFAULT_WINDOW_SIZE.y)
+		viewport.size.x / float(DEFAULT_WINDOW_SIZE.x),
+		viewport.size.y / float(DEFAULT_WINDOW_SIZE.y)
 	)
 
 static func get_mouse_position() -> Vector2:
@@ -245,7 +242,8 @@ static func get_target_process_delta() -> float:
 	return 1.0 / get_target_refresh_rate()
 
 static func get_target_process_delta_usec() -> int:
-	return TimeUtils.seconds_to_usec(get_target_process_delta())
+	var target_process_delta := get_target_process_delta()
+	return 0 if target_process_delta == INF else TimeUtils.seconds_to_usec(target_process_delta)
 
 static func is_root_vsync_enabled() -> bool:
 	return get_root_vsync() > DisplayServer.VSYNC_DISABLED

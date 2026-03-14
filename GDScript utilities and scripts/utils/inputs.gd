@@ -1,13 +1,71 @@
 extends Node
 
-signal mouse_moved(relative)
+signal mouse_moved(relative: Vector2)
 signal pause_pressed
+
+class StickInput:
+	# lmfao bad name
+	const controller_input_curve = preload("res://utils/controller_input_curve.tres")
+	const controller_response_curve = preload("res://utils/controller_response_curve.tres")
+	signal stick_inputted(relative: Vector2)
+	var up: StringName
+	var down: StringName
+	var left: StringName
+	var right: StringName
+	var sens: float
+	var scope_factor: float
+	var scoped: bool
+	var scope_scale: float = 1.
+	var time_max_len: float = 0.
+	
+	func get_scope_relative_sens() -> float:
+		return sens if not scoped else sens * scope_scale * scope_factor
+	
+	func _init(player_index: int) -> void:
+		var suffix := "_"+str(player_index) if player_index else ""
+		up = "analog_look_up"+suffix
+		down = "analog_look_down"+suffix
+		left = "analog_look_left"+suffix
+		right = "analog_look_right"+suffix
+		
+		if player_index > 0:
+			sens = default_input_profile.csens * 40
+			scope_factor = default_input_profile.scope_factor
+	
+	func process(delta: float) -> void:
+		var vector := Input.get_vector(left,right,up,down)
+		if vector:
+			#vector.x = controller_response_curve.sample(vector.x)
+			#vector.y = controller_response_curve.sample(vector.y)
+			if vector.length() >= .95:
+				time_max_len += delta
+				vector *= controller_input_curve.sample(time_max_len)
+			else:
+				time_max_len = 0.
+			stick_inputted.emit(vector * delta * get_scope_relative_sens())
+		else:
+			time_max_len = 0.
+
+var sticks: Array[StickInput] = [
+	StickInput.new(0),
+	StickInput.new(1),
+	StickInput.new(2),
+	StickInput.new(3),
+	StickInput.new(4),
+	StickInput.new(5),
+	StickInput.new(6),
+	StickInput.new(7),
+]
+var mouse_player_idx: int = 0
+var mouse_player_stick_input: StickInput = sticks[mouse_player_idx]
+var mouse_inputs: Dictionary[StringName,InputEvent]
 
 var gameplay_inputs_paused: bool = false
 var gameplay_input_blockers: int = 0
 func pause_gameplay_inputs() -> void:
 	gameplay_input_blockers += 1
 	gameplay_inputs_paused = true
+	@warning_ignore("static_called_on_instance")
 	Inputs.show_cursor()
 
 func resume_gameplay_inputs() -> void:
@@ -16,38 +74,56 @@ func resume_gameplay_inputs() -> void:
 	assert(gameplay_input_blockers >= 0, "Somethings gone wrong if this went negative")
 	if not gameplay_inputs_paused:
 		if Inputs.is_mouse_connected_to_object():
+			@warning_ignore("static_called_on_instance")
 			Inputs.capture_cursor()
 
-const MAX_NUM_PLAYERS = 3
+const ProcessPriorities = Quack.ProcessPriorities
+func _init() -> void:
+	ProcessPriorities.set_singleton(self)
+	#if OS.has_feature("mobile"):
+		#Input.emulate_mouse_from_touch = true
+
+const MAX_NUM_PLAYERS = 8
 var num_players_registered: int
 func _ready() -> void:
+	sticks.make_read_only()
 	register_all_actions()
 	register_splitscreen_actions()
+	var stick := sticks[0]
+	stick.sens = getcsens() * 40
+	stick.scope_factor = get_c_scope_factor()
 
 func register_splitscreen_actions() -> void:
 	var unregistered_actions: Array[StringName]
 	var player_idx: int
-	for i in 4:
+	for i in 7: # Player 1 has regular without a suffix
 		# originally this func looped backwards so that, basically, if it turned
 		# out that player 4 had all their actions registered, then players 2 and
 		# 3 probably already had their actions registered, too. But tbh, since
 		# actions might be renamed, added or removed, and because this func only
 		# runs occasionally, most often on startup, I'm just gonna check every
 		# player anyway.
-		player_idx = MAX_NUM_PLAYERS-i
-		var idx_string := StringName(str(player_idx))
+		player_idx = MAX_NUM_PLAYERS-1-i
+		var idx_string := StringName("_"+str(player_idx))
 		unregistered_actions = get_unregistered_actions(idx_string)
 		if !unregistered_actions.is_empty():
 			for action in unregistered_actions:
 				if OS.is_debug_build():
 					Console.writeverb(action)
-				register_splitscreen_action(action,idx_string)
+				register_splitscreen_action(action,player_idx,idx_string)
 
-func register_splitscreen_action(action: StringName, idx_str: StringName) -> void:
+func register_splitscreen_action(action: StringName, idx: int, idx_str: StringName) -> void:
 	InputMap.add_action(action)
-	if is_just_pressed_action(action):
-		add_splitscreen_action_to_map(action,idx_str,just_pressed_button_actions_map)
-	elif !is_analog_action(action):
+	if default_input_profile.actions.has(action.trim_suffix(idx_str)):
+		for event in default_input_profile.actions[action.trim_suffix(idx_str)].events:
+			if event is InputEventMouse or event is InputEventKey or event is InputEventAction:
+				continue
+			var new_event: InputEvent = (event as InputEvent).duplicate()
+			new_event.device = idx
+			InputMap.action_add_event(action,new_event)
+		#if is_just_pressed_action(action):
+			#add_splitscreen_action_to_map(action,idx_str,just_pressed_button_actions_map)
+	if !is_analog_action(action):
 		add_splitscreen_action_to_map(action,idx_str,button_actions_map)
 
 static func add_splitscreen_action_to_map(action: StringName, idx_str: StringName, map: Dictionary) -> void:
@@ -86,30 +162,71 @@ static func is_mouse_visible() -> bool:
 @warning_ignore("static_called_on_instance")
 @onready var sens: float = getsens() * .01
 @onready var scope_factor: float = get_scope_factor()
-var scoped: bool
-var scope_scale: float = 1.
 
-const SENS_SETTING = "quack/controls/mouse/sensitivity"
-const SCOPE_FACTOR_SETTING = "quack/controls/mouse/scope_sensitivity_scale_factor"
+const CONTROLS_SETTINGS_PATH = "quack/controls/"
+const MOUSE_SETTINGS_PATH = CONTROLS_SETTINGS_PATH + "mouse/"
+const CONTROLLER_SETTINGS_PATH = CONTROLS_SETTINGS_PATH + "controller/"
+const KEYBOARD_SETTINGS_PATH = CONTROLS_SETTINGS_PATH + "keyboard/"
+
+const SENS_STRING = "sensitivity"
+const SCOPE_FACTOR_STRING = "scope_sensitivity_scale_factor"
+
+const SENS_SETTING = MOUSE_SETTINGS_PATH + SENS_STRING
+const SCOPE_FACTOR_SETTING = MOUSE_SETTINGS_PATH + SCOPE_FACTOR_STRING
+
+const CSENS_SETTING = CONTROLLER_SETTINGS_PATH + SENS_STRING
+const C_SCOPE_FACTOR_SETTING = CONTROLLER_SETTINGS_PATH + SCOPE_FACTOR_STRING
+
+const KSENS_SETTING = KEYBOARD_SETTINGS_PATH + SENS_STRING
+const K_SCOPE_FACTOR_SETTING = KEYBOARD_SETTINGS_PATH + SCOPE_FACTOR_STRING
 
 static func getsens() -> float:
-	return ProjectSettings.get_setting_safe(SENS_SETTING,5.)
+	return Quack.Settings.get_setting_safe(SENS_SETTING,5.)
 
 static func get_scope_factor() -> float:
-	return ProjectSettings.get_setting_safe(SCOPE_FACTOR_SETTING,1.)
+	return Quack.Settings.get_setting_safe(SCOPE_FACTOR_SETTING,1.)
+
+static func getcsens() -> float:
+	return Quack.Settings.get_setting_safe(CSENS_SETTING,5.)
+
+static func get_c_scope_factor() -> float:
+	return Quack.Settings.get_setting_safe(C_SCOPE_FACTOR_SETTING,1.)
+
+static func getksens() -> float:
+	return Quack.Settings.get_setting_safe(KSENS_SETTING,2.)
+
+static func get_k_scope_factor() -> float:
+	return Quack.Settings.get_setting_safe(K_SCOPE_FACTOR_SETTING,1.)
 
 func get_scope_relative_sens() -> float:
-	return sens if not scoped else sens * scope_scale * scope_factor
+	return sens if not mouse_player_stick_input.scoped else sens * mouse_player_stick_input.scope_scale * mouse_player_stick_input.scope_factor
 
 func change_sens(newsens: float) -> void:
 	ProjectSettings.set_setting(SENS_SETTING, newsens)
 	sens = newsens * 0.01
 
+func change_csens(newsens: float) -> void:
+	ProjectSettings.set_setting(CSENS_SETTING,newsens)
+	Inputs.sticks[0].sens = newsens * 40
+
+func _process(delta: float) -> void:
+	if Engine.time_scale != 1.:
+		if Engine.time_scale:
+			# Ensure delta is unscaled so slower timescales dont slow down aiming
+			delta /= Engine.time_scale
+		else:
+			delta = Quack.TimeUtils.process_delta_time_float
+	if gameplay_inputs_paused: return
+	for input in sticks:
+		input.process(delta)
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if !gameplay_inputs_paused:
 			mouse_moved.emit((event as InputEventMouseMotion).relative*get_scope_relative_sens())
-	elif Input.is_action_just_pressed(&"ui_cancel"):
+	#elif event is InputEventJoypadMotion:
+		#pass
+	elif Input.is_action_just_pressed(&"ui_pause"):
 		pause_pressed.emit()
 
 enum {UP, DOWN}
@@ -121,9 +238,10 @@ static func action_just_pressed_as_bitflag(action: StringName, this_int: int) ->
 	return this_int if Input.is_action_just_pressed(action) else UP
 
 var button_actions: Array[StringName]
-var button_actions_map = {}
-var just_pressed_button_actions: Array[StringName]
-var just_pressed_button_actions_map = {}
+var button_actions_map: Dictionary[StringName,int] = {}
+#var just_pressed_button_actions: Array[StringName]
+#var just_pressed_button_actions_map: Dictionary[StringName,int] = {}
+var total_num_actions: int
 
 func is_gameplay_action_pressed(action: StringName, exact_match := false) -> bool:
 	return Input.is_action_pressed(action,exact_match) and !gameplay_inputs_paused
@@ -141,14 +259,14 @@ func get_keyboard_updowns(player_idx: int) -> int:
 	var num_button_actions: int = button_actions.size()
 	for action in num_button_actions:
 		updowns |= action_pressed_as_bitflag(button_actions[action] + suffix, 1<<action)
-	for action in just_pressed_button_actions.size():
-		updowns |= action_just_pressed_as_bitflag(just_pressed_button_actions[action] + suffix, 1<<(action+num_button_actions))
+	#for action in just_pressed_button_actions.size():
+		#updowns |= action_just_pressed_as_bitflag(just_pressed_button_actions[action] + suffix, 1<<(action+num_button_actions))
 	return updowns
 
-func get_button_pressed(button: StringName) -> int:
-	return 1<<button_actions_map[button]
-func get_button_just_pressed(button: StringName) -> int:
-	return 1<<(button_actions.size()+just_pressed_button_actions_map[button])
+#func get_button_pressed(button: StringName) -> int:
+	#return 1<<button_actions_map[button]
+#func get_button_just_pressed(button: StringName) -> int:
+	#return 1<<(button_actions.size()+just_pressed_button_actions_map[button])
 
 const left = &"analog_left"
 const right = &"analog_right"
@@ -162,15 +280,15 @@ func get_movement_from_keyboard(player_idx: int) -> Vector2:
 
 const analog_prefix = "analog"
 const ui_prefix = "ui_"
-const just_pressed_prefix = "just_pressed_"
+#const just_pressed_prefix = "just_pressed_"
 
 ## Returns if a string begins with "analog_"
 static func is_analog_action(action: StringName) -> bool:
 	return action.begins_with(analog_prefix)
 
-## Returns if a string begins with "just_pressed_"
-static func is_just_pressed_action(action: StringName) -> bool:
-	return action.begins_with(just_pressed_prefix)
+### Returns if a string begins with "just_pressed_"
+#static func is_just_pressed_action(action: StringName) -> bool:
+	#return action.begins_with(just_pressed_prefix)
 
 static func is_ui_action(action: StringName) -> bool:
 	return action.begins_with(ui_prefix)
@@ -190,26 +308,29 @@ static func is_game_button_action(action: StringName) -> bool:
 ## [method is_game_button_action].
 func register_all_actions() -> void:
 	for action in InputMap.get_actions():
-		# Listen, this is Godot's fault. Not mine. But if we wanna get rid of this
-		# warning, we can jus replace it with get_script().is_game_button_action(action)
 		if get_script().is_game_button_action(action):
-			if get_script().is_just_pressed_action(action):
-				just_pressed_button_actions.append(action)
-				just_pressed_button_actions_map[action] = just_pressed_button_actions.size() - 1
-			else:
-				button_actions.append(action)
-				button_actions_map[action] = button_actions.size() - 1
+			#if get_script().is_just_pressed_action(action):
+				#just_pressed_button_actions.append(action)
+				#just_pressed_button_actions_map[action] = just_pressed_button_actions.size() - 1
+			#else:
+			button_actions.append(action)
+			button_actions_map[action] = button_actions.size() - 1
+	total_num_actions = button_actions.size()# + just_pressed_button_actions.size()
 
 func get_unregistered_actions(idx_str: StringName) -> Array[StringName]:
 	var unregistered_actions: Array[StringName]
 	add_unregistered_actions(idx_str,unregistered_actions,button_actions)
-	add_unregistered_actions(idx_str,unregistered_actions,just_pressed_button_actions)
+	#add_unregistered_actions(idx_str,unregistered_actions,just_pressed_button_actions)
 	# lmao
 	unregistered_actions.append(left+idx_str)
 	unregistered_actions.append(right+idx_str)
 	unregistered_actions.append(forward+idx_str)
 	unregistered_actions.append(back+idx_str)
-	unregistered_actions.append(&"analog_move_mod"+idx_str)
+	unregistered_actions.append(&"analog_look_up"+idx_str)
+	unregistered_actions.append(&"analog_look_down"+idx_str)
+	unregistered_actions.append(&"analog_look_left"+idx_str)
+	unregistered_actions.append(&"analog_look_right"+idx_str)
+	unregistered_actions.append(&"analog_move_mod"+idx_str) # old, maybe delete
 	return unregistered_actions
 
 func add_unregistered_actions(idx: StringName, add_to: Array[StringName], add_from: Array[StringName]) -> void:
@@ -221,13 +342,13 @@ func add_unregistered_actions(idx: StringName, add_to: Array[StringName], add_fr
 func register_actions_for_splitscreen_player(idx: int) -> void:
 	var idx_str := StringName(str(idx))
 	for action in get_unregistered_actions(idx_str):
-		register_splitscreen_action(action,idx_str)
+		register_splitscreen_action(action,idx,idx_str)
 
 func get_button_action_idx(action: StringName) -> int:
 	return (button_actions_map[action] as int)
 
-func get_just_pressed_button_action_idx(action: StringName) -> int:
-	return (just_pressed_button_actions_map[action] as int)
+#func get_just_pressed_button_action_idx(action: StringName) -> int:
+	#return (just_pressed_button_actions_map[action] as int)
 
 func register_key_for_action(key: String, action: StringName) -> void:
 	var event := InputEventKey.new()
@@ -286,32 +407,71 @@ func get_key_event(key: String) -> InputEventKey:
 	event.set_physical_keycode(OS.find_keycode_from_string(key))
 	return event
 
-var players: Array[Player]
+const default_input_profile = preload("res://utils/default_input_profile.tres")
 
 const INPUT_BUFFER_SIZE = 120
 const MOUSE_MOVEMENT_OWNER_PLAYER_IDX = "quack/gameplay/mouse_movement_owner_player_idx"
-class Player:
-	var id: int
-	var screen: int
-	var team
-	var owns_mouse_movement: bool
-	var username: String
-	
-	var input_buffer: Array[PlayerInputs]
-	
-	func _init(id: int, screen: int, username: String) -> void:
-		self.screen = screen
-		self.id = id + screen
-		owns_mouse_movement = (screen == ProjectSettings.get_setting_safe(MOUSE_MOVEMENT_OWNER_PLAYER_IDX,0) as int)
-		
-		input_buffer.resize(Quack.Network.input_buffer_size)
-		input_buffer[0] = PlayerInputs.new(0,Vector2.ZERO)
-
 var input_signature: int
 class PlayerInputs:
 	
 	var updowns: int
+	var just_pressed_updowns: int
 	var aim_angle: Vector2
+	var input_dir: Vector2
+	var frame_hint: int
+	var firing_interp_fraction: float = 1.
+	var interp_aim_angle: Vector2
+	var reset_interp: bool = true
 	
-	func _init(updowns: int, aim_angle: Vector2) -> void:
-		pass
+	#func _init() -> void:
+		#pass
+	
+	func _to_string() -> String:
+		return "Updowns: %s Just pressed: %s AA: %s Dir: %s Frame hint: %s Interp: %s Interp AA: %s"%[
+			Quack.ByteUtils.to_binary_string(updowns,false,Inputs.total_num_actions),
+			Quack.ByteUtils.to_binary_string(just_pressed_updowns,false,Inputs.total_num_actions),
+			aim_angle,
+			input_dir,
+			frame_hint,
+			firing_interp_fraction,
+			interp_aim_angle
+		]
+	
+	func encode(buffer: NetworkedNode.StreamPeerBitBuffer) -> void:
+		for i in Inputs.total_num_actions:
+			buffer.put_bool(updowns&(1<<i))
+			buffer.put_bool(just_pressed_updowns&(1<<i))
+		buffer.put_rv2_half(aim_angle)
+		buffer.put_half(input_dir.x)
+		buffer.put_half(input_dir.y)
+		# This is reassigned to a snapped value here just to be super fucking
+		# careful that comparing to 1. gets the same result on both ends of
+		# encoding/decoding
+		firing_interp_fraction = snappedf(firing_interp_fraction,.001)
+		buffer.put_n16(firing_interp_fraction)
+		if firing_interp_fraction != 1.:
+			buffer.put_rv2_half(interp_aim_angle)
+		buffer.put_u32(frame_hint)
+	
+	func decode(buffer: NetworkedNode.StreamPeerBitBuffer) -> void:
+		updowns = 0
+		just_pressed_updowns = 0
+		for i in Inputs.total_num_actions:
+			updowns |= (1<<i)*int(buffer.get_bool())
+			just_pressed_updowns |= (1<<i)*int(buffer.get_bool())
+		aim_angle = buffer.get_rv2_half()
+		input_dir = Vector2(buffer.get_half(),buffer.get_half())
+		firing_interp_fraction = snappedf(buffer.get_n16(),.001)
+		if firing_interp_fraction != 1.:
+			interp_aim_angle = buffer.get_rv2_half()
+		frame_hint = buffer.get_u32()
+	
+	func is_action_pressed(action: StringName) -> bool:
+		return updowns & 1<<Inputs.button_actions_map[action]
+	
+	func is_action_just_pressed(action: StringName) -> bool:
+		return just_pressed_updowns & 1<<Inputs.button_actions_map[action]
+	
+
+func get_player_inputs(player: Quack.Network.MultiplayerSession.Player) -> PlayerInputs:
+	return player.get_input() if player else PlayerInputs.new()

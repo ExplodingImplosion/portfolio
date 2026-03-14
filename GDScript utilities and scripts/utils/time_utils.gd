@@ -261,17 +261,26 @@ static func get_func_time_seconds(method: Callable) -> float:
 static func is_frame_out_of_time(max_frame_frac: float = .95) -> bool:
 	return get_frame_frac() >= max_frame_frac or Engine.is_in_physics_frame()
 
-static func check_func_time(function: Callable, include_stack := false) -> Variant:
+static func check_func_time(function: Callable, include_arguments := false, include_object := false, include_stack := false) -> Variant:
 	var t1: int
 	var t2: int
 	var to_return: Variant
 	t1 = Time.get_ticks_usec()
 	to_return = function.call()
 	t2 = Time.get_ticks_usec()
-	Console.write("Function %s took %sms"%[function.get_method(),(float(t2-t1)/1_000_000.) * 1_000.])
+	Console.write.call_deferred("Function %s%s%s took %sms"%[
+		function.get_method(),
+		" %s"%[function.get_bound_arguments()]\
+		if include_arguments and function.get_bound_arguments_count() > 0\
+		else\
+		"",
+		" %s"%function.get_object()\
+		if include_object else\
+		""
+		,(float(t2-t1)/1_000_000.) * 1_000.])
 	if include_stack:
 		for dict:Dictionary in get_stack():
-			Console.write_dict(dict)
+			Console.write_dict.call_deferred(dict)
 	return to_return
 
 static func get_time_since_physics_frame_usec() -> int:

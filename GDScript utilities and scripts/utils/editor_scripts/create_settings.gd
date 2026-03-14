@@ -274,7 +274,7 @@ func add_hint_string(setting: String, hint_string: String) -> void:
 		print(get_property_info_dict(setting,ProjectSettings.get_setting(setting),PROPERTY_HINT_NONE,hint_string))
 		ProjectSettings.add_property_info(get_property_info_dict(setting,ProjectSettings.get_setting(setting),PROPERTY_HINT_NONE,hint_string))
 	else:
-		printerr("Can't add hint string to setting %s. Setting doesn't exist.")
+		printerr("Can't add hint string to setting %s. Setting doesn't exist."%setting)
 
 func get_property_info_dict(setting: String, value: Variant, hint: PropertyHint = PROPERTY_HINT_NONE, hint_string: String = "") -> Dictionary:
 	return {

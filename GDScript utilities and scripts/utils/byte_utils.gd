@@ -61,14 +61,14 @@ static func get_bit_by_index_in_byte(bit_index: int, byte: int) -> bool:
 
 static func which_byte_is_bit_in(bit_offset: int) -> int:
 	@warning_ignore("integer_division")
-	return bit_offset/8+(bit_offset%8)/8
+	return bit_offset / 8
 
-# TODO: Has a bug where it never returns 0. For multiplayer, this means that
-# node bitmask is always at least 1 byte. Fix?
 static func get_num_bytes_to_hold_num_bits(num_bits: int) -> int:
-	return which_byte_is_bit_in(num_bits) + 1
+	@warning_ignore("integer_division")
+	return (num_bits+7)/8
 
 const max_u8 = 255
+const num_u8_vals = 256
 static func is_valid_u8(byte: int) -> bool:
 	return byte <= max_u8 and byte >= 0
 
@@ -76,6 +76,7 @@ static func assert_valid_u8(byte: int) -> void:
 	assert(is_valid_u8(byte),"Number %s is an invalid unsigned 8-bit int, from 0 to %s"%[byte,max_u8])
 
 const max_u16 = 65535
+const num_u16_vals = 65536
 static func is_valid_u16(num: int) -> bool:
 	return num <= max_u16 and num >= 0
 
@@ -83,10 +84,10 @@ static func assert_valid_u16(num: int) -> void:
 	assert(is_valid_u16(num),"Number %s is an invalid unisgned 16-bit int, from 0 to %s."%[num,max_u16])
 
 static func wrap_u16(num: int) -> int:
-	return wrapi(num,0,max_u16)
+	return wrapi(num,0,num_u16_vals)
 
 static func wrap_u8(num: int) -> int:
-	return wrapi(num,0,max_u8)
+	return wrapi(num,0,num_u8_vals)
 
 static func dumbhash(bytes: PackedByteArray) -> int:
 	var gaming: int = 0
@@ -336,19 +337,18 @@ static func to_binary_string(num: int, Ob: bool = false, min_size: int = 0) -> S
 		string = "0b" + string
 	return string
 
-static func to_binary_array(bytes: PackedByteArray, Ob: bool = false, fixed_size: bool = false) -> PackedStringArray:
+static func to_binary_array(bytes: PackedByteArray, Ob: bool = false) -> PackedStringArray:
 	var strings := PackedStringArray()
 	var size := bytes.size()
 	strings.resize(size)
-	var min_size: int = int(fixed_size)*8
 	for i in size:
-		strings[i] = to_binary_string(bytes[i], Ob, min_size)
+		strings[i] = to_binary_string(bytes[i], Ob, 8)
 	
 	return strings
 
-static func array_to_binary_string(bytes: PackedByteArray, Ob: bool = false, fixed_size: bool = false) -> String:
+static func array_to_binary_string(bytes: PackedByteArray, Ob: bool = false) -> String:
 	var string: String = ""
-	for binary_string in to_binary_array(bytes,Ob,fixed_size):
+	for binary_string in to_binary_array(bytes,Ob):
 		string += binary_string
 	return string
 

@@ -9,6 +9,12 @@ const Network = preload("res://network/network.gd")
 const ByteUtils = preload("res://utils/byte_utils.gd") # not directly used in this script, but other scripts have a dependency on it lmao hehe
 const Audio = preload("res://utils/audio.gd")
 const GraphicsSettings = preload("res://utils/graphics_settings.gd")
+const ThreadUtils = preload("res://utils/thread_utils.gd")
+const Replays = preload("res://network/multiplayer/replays.gd")
+const Splitscreen = preload("res://interface/splitscreen/splitscreen.gd")
+const ProcessPriorities = preload("res://utils/process_priorities.gd")
+const Settings = preload("res://utils/settings.gd")
+const Profiler = preload("res://utils/profiler.gd")
 #endregion
 
 ## Setting path to access the number of desired users playing the game.
@@ -57,6 +63,7 @@ func _process(delta: float) -> void:
 #		print("main: threaded time %s != %s"%[current_time_thread, current_time])
 
 func _init() -> void:
+	ProcessPriorities.set_singleton(self)
 #	stupid_shader_cache_workaround()
 	# Passing self cuz 'Quack' as a thing isnt initialized yet is is insanely stupid
 	#assert(!Resources.resources.is_empty())
@@ -102,18 +109,20 @@ func _ready() -> void:
 	WindowUtils.initialize_general_settings()
 	# move this to audio script if there's more settings that get updated
 	AudioServer.set_bus_volume_linear(Audio.get_master_volume_bus_idx(),Audio.get_volume())
-	ConnectivityTester.test_internet_connection()
+	if Network.get_online():
+		ConnectivityTester.test_internet_connection()
+	else:
+		Console.write_in_color("Starting in offline mode.",Color.DARK_ORANGE)
 	on_scene_changed.call_deferred()
 	multiplayer.set_server_relay_enabled(false)
-	WorkerThreadPool.add_task(Network.initialize,false)
-	#WorkerThreadPool.add_task(Resources.initialize,false)
+	ThreadUtils.add_thread(Network.initialize)
 	# might be able to get rid of this tbh, this is legacy and untested as
 	# to whether getting rid of it causes any issues
 	Tickrate.auto_assign_physics_delta.call_deferred()
 
 const USER_DIRECTORY: String = "user://"
 const SETTING_FILEPATH: String = "override.cfg"
-var legaming_patch_app_hack := OS.get_executable_path().get_base_dir()+"/"+SETTING_FILEPATH
+var legaming_patch_app_hack := OS.get_executable_path().get_base_dir()+"/"+SETTING_FILEPATH if is_exported() else "res://"+SETTING_FILEPATH
 func _exit_tree() -> void:
 	ProjectSettings.save_custom(legaming_patch_app_hack)
 
@@ -121,7 +130,7 @@ func setup_filepaths() -> void:
 	@warning_ignore("static_called_on_instance")
 	setup_directory(USER_DIRECTORY)
 	# same as setup_directory(Replays.REPLAY_DIRECTORY)
-	#Replays.setup_filepath()
+	Replays.setup_filepath()
 
 static func setup_directory(directory: String) -> void:
 	if !DirAccess.dir_exists_absolute(directory):
@@ -184,9 +193,7 @@ func get_current_camera() -> Camera3D:
 
 func change_scene(scene: String) -> void:
 	var gaming: Error = tree.change_scene_to_file(scene)
-	if gaming != OK:
-		Console.push_err("Changing scene got error %s."%error_string(gaming))
-		breakpoint
+	Console.get_assertfail_msg(gaming == OK,"Changing scene got error %s."%error_string(gaming),true)
 	# Below is the single dumbest line of code in this file, maybe the whole project.
 	# Yes, this is on purpose. Yes, this works. This is a real thing that you really
 	# have to do if you want to use Godot's SceneTree change_scene_to_file function.
@@ -305,18 +312,27 @@ static func get_func_length(function: Callable) -> int:
 static func get_filename_without_extension(path: String) -> String:
 	return path.get_file().rstrip(path.get_extension())
 
-static func disconnect_all_signals(obj: Object) -> void:
+static func disconnect_all_signals(obj: Object, object_filter: Array[Object] = []) -> void:
 	for sig in obj.get_signal_list():
-		disconnect_all_signal_connections(obj,sig.name)
+		disconnect_all_signal_connections(obj,sig.name,object_filter)
 
 static func disconnect_all_connections(sig: Signal) -> void:
 	for connection in sig.get_connections():
 		sig.disconnect(connection.callable as Callable)
 
-static func disconnect_all_signal_connections(obj: Object, sig: String) -> void:
+static func disconnect_all_signal_connections(obj: Object, sig: String, object_filter: Array[Object] = []) -> void:
 	var connections: Array[Dictionary] = obj.get_signal_connection_list(sig)
-	for connection in connections:
-		obj.disconnect(sig,connection.callable)
+	if object_filter.is_empty():
+		for connection in connections:
+			obj.disconnect(sig,connection.callable)
+	else:
+		for connection in connections:
+			var callable: Callable = connection.callable
+			if object_filter.has(callable.get_object()):
+				obj.disconnect(sig,callable)
+				Console.write_in_color("Disconnecting "+callable.get_method(),Color.PURPLE)
+			else:
+				Console.write_in_color("Not disconnecting "+callable.get_method(),Color.MAROON)
 
 static func signal_disconnect_all_connections(sig: Signal) -> void:
 	var connections: Array[Dictionary] = sig.get_connections()
@@ -420,37 +436,7 @@ static func request_ready_recursive(node: Node) -> void:
 	for child in node.get_children(true):
 		request_ready_recursive(child)
 
-func add_debug_boxmesh(transform: Transform3D, time: float = 3., custom_extents := Vector3(.05,.05,.05)) -> void:
-	var bm := BoxMesh.new()
-	bm.size = custom_extents
-	spawn_debug_mesh(bm,transform,time)
-
-func spawn_debug_mesh(mesh: Mesh, transform: Transform3D, time: float = 3.) -> void:
-	var node := MeshInstance3D.new()
-	node.mesh = mesh
-	node.ready.connect(node.set_global_transform.bind(transform))
-	get_current_scene().add_child(node)
-	# BUG: for some fucking reason this last arg in create_timer, which supposedly
-	# ignores timescale makes this timer take way fucking longer. FIXME! It should
-	# ignore timescale, but for now I'm setting it so that it doesn't.
-	tree.create_timer(time,true,true,false).timeout.connect(node.queue_free)
-
-func can_add_debug_mesh() -> bool:
-	return ProjectSettings.get_setting_safe("quack/debug/show_collisions",false)
-
-func spawn_colldier_debug_mesh(collider: CollisionShape3D, time: float = ProjectSettings.get_setting_safe("quack/debug/collision_shape_default_time",3.) as float) -> void:
-	 # Scenetreetimers in physics frames are bugged and assume that it's the
-	# default tickrate or whatever. this might cause issues if the game ever
-	# launches with a non 60hz physics framerate.
-	spawn_debug_mesh(collider.shape.get_debug_mesh(),collider.global_transform,time / (60. / Engine.physics_ticks_per_second))
-
-func spawn_debug_mesh_child(collider: CollisionShape3D, interp: bool = false) -> void:
-	var node := MeshInstance3D.new()
-	node.mesh = collider.shape.get_debug_mesh()
-	node.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON if interp else Node.PHYSICS_INTERPOLATION_MODE_OFF
-	collider.add_child(node)
-
-func is_node_valid(node: Node) -> bool:
+func is_node_valid(node: Variant) -> bool:
 	if node == null: return false
 	if node.is_queued_for_deletion() or !is_instance_valid(node): return false
 	return true

@@ -1,8 +1,29 @@
+const Compression = preload("res://utils/compression.gd")
 var history: Array[PackedByteArray]
 var history_offset: int = -1
 
 var packet_map: Dictionary
 var packet_signature_map: Dictionary
+
+var packets: Array[PackedByteArray]
+
+func add_packet(_from: int, packet: PackedByteArray) -> void:
+	packets.append(packet)
+
+func save(to: String) -> void:
+	var file := FileAccess.open(to,FileAccess.WRITE)
+	var file_err := FileAccess.get_open_error()
+	if file_err != OK:
+		return Console.push_err("File %s couldn't be written. Error %s."%[to,error_string(file_err)])
+	var status := file.store_buffer(Compression.repeated_compress(var_to_bytes(packets),FileAccess.COMPRESSION_ZSTD))
+	Console.write("Storing %s %s."%[to,"succeeded" if status else "failed"])
+	file.flush()
+
+static func get_packets(from: String) -> Array[PackedByteArray]:
+	if FileAccess.file_exists(from):
+		return bytes_to_var(Compression.repeated_decompress(FileAccess.get_file_as_bytes(from),FileAccess.COMPRESSION_ZSTD))
+	else:
+		return []
 
 func _init(tracker_size: int) -> void:
 	history.resize(tracker_size)

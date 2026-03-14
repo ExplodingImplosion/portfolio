@@ -4,11 +4,11 @@ const ByteUtils = Quack.ByteUtils
 const DEFAULT_SEND_PORT = 42069
 const DEFAULT_RECEIVE_PORT = 25566
 const default_deletion_threshold_usec = 3000000 # 3 seconds
-const default_interval_usec = 250000 # 0.25 seconds
+const default_interval_usec = 690000 # 0.69 seconds
 const internet_target_ips: PackedStringArray = [""]
 const local_broadcast_ip = '255.255.255.255'
 
-const num_ports_to_try = 100
+const num_ports_to_try = 20
 
 signal server_added(server: ServerInfo)
 signal server_updated(server: ServerInfo)
@@ -30,6 +30,8 @@ var servers: Dictionary
 class Target:
 	var ip: String
 	var port: int
+
+var port_attempt_idx: int = 0
 
 func _init(interval_usec: int = default_interval_usec, this_deletion_threshold_usec: int = default_deletion_threshold_usec, destination_ips: PackedStringArray = [local_broadcast_ip], these_target_ports: PackedInt32Array = [DEFAULT_RECEIVE_PORT], this_receive_port: int = DEFAULT_RECEIVE_PORT) -> void:
 	
@@ -99,8 +101,8 @@ func broadcast(bytes: PackedByteArray) -> void:
 		if ip == local_broadcast_ip:
 			# Try a bunch of ports above in case there's multiple local machines.
 			Console.writeverb("Pinging %s:%s-%s..."%[ip,target_port,target_port+num_ports_to_try-1])
-			for port in num_ports_to_try:
-				send_to(bytes,ip,target_port+port)
+			send_to(bytes,ip,target_port+port_attempt_idx)
+			port_attempt_idx = clampi(port_attempt_idx+1,0,num_ports_to_try)
 			#Console.writeverb("Done pinging %s:%s."%[ip,target_port+num_ports_to_try-1])
 		# Otherwise,
 		else:

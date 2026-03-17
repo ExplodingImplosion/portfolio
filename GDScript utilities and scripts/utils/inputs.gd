@@ -17,6 +17,9 @@ class StickInput:
 	var scoped: bool
 	var scope_scale: float = 1.
 	var time_max_len: float = 0.
+	var events: Array[InputEvent]
+	var event_actions: Array[StringName]
+	var num_events: int
 	
 	func get_scope_relative_sens() -> float:
 		return sens if not scoped else sens * scope_scale * scope_factor
@@ -111,6 +114,16 @@ func register_splitscreen_actions() -> void:
 				if OS.is_debug_build():
 					Console.writeverb(action)
 				register_splitscreen_action(action,player_idx,idx_string)
+		var events: Array[InputEvent]
+		var actions: Array[StringName]
+		for action in get_registered_actions(idx_string):
+			for event in InputMap.action_get_events(action):
+				if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+					events.append(event)
+					actions.append(action.trim_suffix(idx_string))
+		sticks[i].events = events
+		sticks[i].num_events = events.size()
+		sticks[i].event_actions = actions
 
 func register_splitscreen_action(action: StringName, idx: int, idx_str: StringName) -> void:
 	InputMap.add_action(action)
@@ -253,7 +266,7 @@ func is_gameplay_action_just_released(action: StringName, exact_match := false) 
 	return Input.is_action_just_released(action,exact_match) and !gameplay_inputs_paused
 
 func get_keyboard_updowns(player_idx: int) -> int:
-	var suffix := StringName(str(player_idx)) if player_idx > 0 else &""
+	var suffix := StringName("_"+str(player_idx)) if player_idx > 0 else &""
 	if gameplay_inputs_paused: return 0
 	var updowns: int = 0
 	var num_button_actions: int = button_actions.size()
@@ -274,7 +287,7 @@ const forward = &"analog_forward"
 const back = &"analog_back"
 
 func get_movement_from_keyboard(player_idx: int) -> Vector2:
-	var suffix := StringName(str(player_idx)) if player_idx > 0 else &""
+	var suffix := StringName("_"+str(player_idx)) if player_idx > 0 else &""
 	if gameplay_inputs_paused: return Vector2.ZERO
 	return Input.get_vector(left+suffix,right+suffix,forward+suffix,back+suffix) * (1.0 - 0.5 * int(Input.is_action_pressed(&"walk")))
 
@@ -317,6 +330,26 @@ func register_all_actions() -> void:
 			button_actions_map[action] = button_actions.size() - 1
 	total_num_actions = button_actions.size()# + just_pressed_button_actions.size()
 
+func add_registered_actions(idx: StringName, add_to: Array[StringName], add_from: Array[StringName]) -> void:
+	for action in add_from:
+		action += idx
+		if InputMap.has_action(action):
+			add_to.append(action)
+
+func get_registered_actions(idx_str: StringName) -> Array[StringName]:
+	var registered_actions: Array[StringName]
+	add_registered_actions(idx_str,registered_actions,button_actions)
+	registered_actions.append(left+idx_str)
+	registered_actions.append(right+idx_str)
+	registered_actions.append(forward+idx_str)
+	registered_actions.append(back+idx_str)
+	registered_actions.append(&"analog_look_up"+idx_str)
+	registered_actions.append(&"analog_look_down"+idx_str)
+	registered_actions.append(&"analog_look_left"+idx_str)
+	registered_actions.append(&"analog_look_right"+idx_str)
+	registered_actions.append(&"analog_move_mod"+idx_str)
+	return registered_actions
+
 func get_unregistered_actions(idx_str: StringName) -> Array[StringName]:
 	var unregistered_actions: Array[StringName]
 	add_unregistered_actions(idx_str,unregistered_actions,button_actions)
@@ -340,9 +373,19 @@ func add_unregistered_actions(idx: StringName, add_to: Array[StringName], add_fr
 			add_to.append(action)
 
 func register_actions_for_splitscreen_player(idx: int) -> void:
-	var idx_str := StringName(str(idx))
+	var idx_str := StringName("_"+str(idx))
 	for action in get_unregistered_actions(idx_str):
 		register_splitscreen_action(action,idx,idx_str)
+
+func move_splitscreen_controller(from: int, to: int) -> void:
+	var idx_str := StringName("_"+str(from)) if from else StringName("")
+	var new_idx_str := StringName("_"+str(to)) if to else StringName("")
+	var from_stick := sticks[from]
+	# Take all the controller's events and assign them to actions with the
+	# 'to' player's index
+	for i in from_stick.num_events:
+		InputMap.action_erase_event(from_stick.event_actions[i]+idx_str,from_stick.events[i])
+		InputMap.action_add_event(from_stick.event_actions[i]+new_idx_str,from_stick.events[i])
 
 func get_button_action_idx(action: StringName) -> int:
 	return (button_actions_map[action] as int)
@@ -437,7 +480,7 @@ class PlayerInputs:
 			interp_aim_angle
 		]
 	
-	func encode(buffer: NetworkedNode.StreamPeerBitBuffer) -> void:
+	func encode(buffer: StreamPeerBitBuffer) -> void:
 		for i in Inputs.total_num_actions:
 			buffer.put_bool(updowns&(1<<i))
 			buffer.put_bool(just_pressed_updowns&(1<<i))
@@ -453,7 +496,7 @@ class PlayerInputs:
 			buffer.put_rv2_half(interp_aim_angle)
 		buffer.put_u32(frame_hint)
 	
-	func decode(buffer: NetworkedNode.StreamPeerBitBuffer) -> void:
+	func decode(buffer: StreamPeerBitBuffer) -> void:
 		updowns = 0
 		just_pressed_updowns = 0
 		for i in Inputs.total_num_actions:
@@ -461,7 +504,7 @@ class PlayerInputs:
 			just_pressed_updowns |= (1<<i)*int(buffer.get_bool())
 		aim_angle = buffer.get_rv2_half()
 		input_dir = Vector2(buffer.get_half(),buffer.get_half())
-		firing_interp_fraction = snappedf(buffer.get_n16(),.001)
+		firing_interp_fraction = snappedf(buffer.get_n16(1.),.001)
 		if firing_interp_fraction != 1.:
 			interp_aim_angle = buffer.get_rv2_half()
 		frame_hint = buffer.get_u32()

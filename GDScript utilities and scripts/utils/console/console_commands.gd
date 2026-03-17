@@ -1268,6 +1268,12 @@ static func freecam_cmd() -> void:
 		#else:
 			#Quack.tree.current_scene.add_child(FreeCam.new())
 
+static func controller_set_player_cmd(controller_idx: int, player_idx: int) -> void:
+	controller_idx = clampi(controller_idx-1,0,7)
+	player_idx = clampi(player_idx-1,0,7)
+	Console.write("Moving controller %s to control player %s."%[controller_idx+1,player_idx+1])
+	Inputs.move_splitscreen_controller(controller_idx,player_idx)
+
 static func register_splitscreen_actions_cmd(player_idx: int) -> void:
 	var idx: int = clampi(player_idx-1,1,7)
 	Console.write("Adding splitscreen actions for player %s."%(idx+1))
@@ -1320,8 +1326,8 @@ static func give_glocc_cmd(remote_sender_id: int) -> void:
 	try_give_player_item(remote_sender_id, glocc_scene)
 
 const glocccc_scene = preload("res://gameplay/item/glocccc/glocccc.tscn")
-const give_extendo_auth_only = true
-static func give_extendo_cmd(remote_sender_id: int) -> void:
+const give_glocccc_auth_only = true
+static func give_glocccc_cmd(remote_sender_id: int) -> void:
 	try_give_player_item(remote_sender_id, glocccc_scene)
 
 const quickscope_scene = preload("res://gameplay/item/quickscope_sniper/quickscope_sniper.tscn")
@@ -1617,11 +1623,11 @@ static func check_packets_cmd() -> void:
 		var decoded := packet_type.packet_decode(packet.slice(1))
 		Console.write(str(decoded))
 		if decoded is Network.NetworkPackets.WorldStatePacket:
-			var buffer := Network.NetworkPackets.StreamPeerBitBuffer.decode(
+			var buffer := StreamPeerBitBuffer.decode(
 				(decoded as Network.NetworkPackets.WorldStatePacket).contents
 			)
 			Console.write(buffer)
-			Console.write(buffer.get_bools_as_array())
+			Console.write("get_bools_as_array unimplemented in cpp")
 			Console.write(buffer.get_non_bools(false))
 		Console.writeln()
 
@@ -1994,3 +2000,80 @@ static func dump_codegen_cmd(id: int = -1, copy := false) -> void:
 			print()
 	if copy:
 		DisplayServer.clipboard_set(src)
+
+const test_bit_buffer_debug_only = true
+static func test_bit_buffer_cmd() -> void:
+	var bitbuffer := StreamPeerBitBuffer.allocate(128,1024)
+	Console.cwrite("Put 1024 allocated trues")
+	for i in 1024:
+		bitbuffer.put_bool(true);
+	test_export_reimport(bitbuffer)
+	Console.cwrite("Put 1024 allocated trues")
+	for i in 1024:
+		bitbuffer.put_bool(false)
+	test_export_reimport(bitbuffer)
+	Console.cwrite("Put 1024 unallocated trues and falses")
+	bitbuffer.reallocate_bools(1); bitbuffer.bool_position = 1024;
+	for i in 1024:
+		bitbuffer.put_bool(i % 2 == 0)
+	test_export_reimport(bitbuffer)
+	Console.cwrite("Put some bullshit")
+	var five := Vector3.ONE * 5; var tau := Vector2.ONE * TAU; var pi := Vector2.ONE * PI;
+	var half := Vector2.ONE / 2.; var p1 := Vector2.ONE * .1;
+	var vp := bitbuffer.get_var_pos()
+	bitbuffer.put_v3(five)
+	bitbuffer.put_nv2_half(half,1.)
+	bitbuffer.put_nv2_half(p1,1.)
+	bitbuffer.put_rv2_half(tau)
+	bitbuffer.put_rv2_half(pi)
+	bitbuffer.seek_var_pos(vp)
+	var dfive := bitbuffer.get_v3()
+	var dhalf := bitbuffer.get_nv2_half(1.)
+	var dp1 := bitbuffer.get_nv2_half(1.)
+	var dtau := bitbuffer.get_rv2_half(TAU)
+	var dpi := bitbuffer.get_rv2_half(TAU)
+	
+	Console.get_assertfail_msg(dfive.is_equal_approx(five),"%s != %s"%[dfive,five],true)
+	Console.get_assertfail_msg(dhalf.is_equal_approx(half),"%s != %s"%[dhalf,half],true)
+	Console.get_assertfail_msg(dp1.is_equal_approx(p1),"%s != %s"%[dp1,p1],true)
+	Console.get_assertfail_msg(wrapf(dtau.x,0.,TAU) - wrapf(tau.x,0.,TAU) < .001,"%s != %s"%[wrapf(dtau.x,0.,TAU), wrapf(tau.x,0.,TAU)],true)
+	Console.get_assertfail_msg(dpi - pi < Vector2.ONE * .001,"%s != %s"%[dpi,pi],true)
+	
+	test_export_reimport(bitbuffer)
+	
+	Console.cwrite("Put more bools and continuously push back variables")
+	
+	for i in 1024:
+		var ap1 := bitbuffer.get_position(); var vp1 := bitbuffer.get_var_pos();
+		bitbuffer.put_bool(i % 2 == 0)
+		var ap2 := bitbuffer.get_position(); var vp2 := bitbuffer.get_var_pos();
+		if i % 8 != 0:
+			Console.get_assertfail_msg(ap1 == ap2,"absolute position %s stayed the same as %s on iter %s"%[ap1, ap2,i],true)
+		else:
+			Console.get_assertfail_msg(ap1 != ap2,"absolute position %s changed to %s on iter %s"%[ap1, ap2,i],true)
+		Console.get_assertfail_msg(vp1 == vp2,"byte-aligned position %s changed to %s on iter %s"%[vp1, vp2,i],true)
+	
+	bitbuffer.seek(bitbuffer.get_size()-1)
+	test_export_reimport(bitbuffer)
+	
+	var dfive2 := bitbuffer.get_v3()
+	var dhalf2 := bitbuffer.get_nv2_half(1.)
+	var dp12 := bitbuffer.get_nv2_half(1.)
+	var dtau2 := bitbuffer.get_rv2_half(TAU)
+	var dpi2 := bitbuffer.get_rv2_half(TAU)
+	
+	Console.get_assertfail_msg(dfive == dfive2, "%s != %s"%[dfive,dfive2],true)
+	Console.get_assertfail_msg(dhalf == dhalf2, "%s != %s"%[dhalf,dhalf2],true)
+	Console.get_assertfail_msg(dp1 == dp12, "%s != %s"%[dp1,dp12],true)
+	Console.get_assertfail_msg(dtau == dtau2, "%s != %s"%[dtau,dtau2],true)
+	Console.get_assertfail_msg(dpi == dpi2, "%s != %s"%[dpi,dpi2],true)
+	
+
+static func test_export_reimport(bitbuffer: StreamPeerBitBuffer) -> void:
+	var bytes := bitbuffer.export();
+	Console.cwrite(bitbuffer.get_size(), bitbuffer.bool_position, bitbuffer.bool_bytes, bitbuffer.get_var_pos(), bitbuffer.get_position())
+	Console.cwrite(bytes.size()-4)
+	bitbuffer.import(bytes)
+	Console.cwrite(bitbuffer.get_size(), bitbuffer.bool_position, bitbuffer.bool_bytes, bitbuffer.get_var_pos(), bitbuffer.get_position())
+	Console.get_assertfail_msg(bytes.slice(4) == bitbuffer.data_array,"fuck da test failed! exported bytes != reimported bytes",true)
+	#Console.cwrite(bytes.slice(4))

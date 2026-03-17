@@ -20,12 +20,13 @@ class StickInput:
 	var events: Array[InputEvent]
 	var event_actions: Array[StringName]
 	var num_events: int
+	var suffix: String
 	
 	func get_scope_relative_sens() -> float:
 		return sens if not scoped else sens * scope_scale * scope_factor
 	
 	func _init(player_index: int) -> void:
-		var suffix := "_"+str(player_index) if player_index else ""
+		suffix = "_"+str(player_index) if player_index else ""
 		up = "analog_look_up"+suffix
 		down = "analog_look_down"+suffix
 		left = "analog_look_left"+suffix
@@ -34,6 +35,15 @@ class StickInput:
 		if player_index > 0:
 			sens = default_input_profile.csens * 40
 			scope_factor = default_input_profile.scope_factor
+	
+	func setup_events() -> void:
+		for action in Inputs.get_registered_actions(suffix):
+			for event in InputMap.action_get_events(action):
+				if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+					events.append(event)
+					event_actions.append(action.trim_suffix(suffix))
+		events = events
+		num_events = events.size()
 	
 	func process(delta: float) -> void:
 		var vector := Input.get_vector(left,right,up,down)
@@ -95,6 +105,7 @@ func _ready() -> void:
 	var stick := sticks[0]
 	stick.sens = getcsens() * 40
 	stick.scope_factor = get_c_scope_factor()
+	stick.setup_events()
 
 func register_splitscreen_actions() -> void:
 	var unregistered_actions: Array[StringName]
@@ -114,19 +125,10 @@ func register_splitscreen_actions() -> void:
 				if OS.is_debug_build():
 					Console.writeverb(action)
 				register_splitscreen_action(action,player_idx,idx_string)
-		var events: Array[InputEvent]
-		var actions: Array[StringName]
-		for action in get_registered_actions(idx_string):
-			for event in InputMap.action_get_events(action):
-				if event is InputEventJoypadButton or event is InputEventJoypadMotion:
-					events.append(event)
-					actions.append(action.trim_suffix(idx_string))
-		sticks[i].events = events
-		sticks[i].num_events = events.size()
-		sticks[i].event_actions = actions
+		sticks[player_idx].setup_events()
 
 func register_splitscreen_action(action: StringName, idx: int, idx_str: StringName) -> void:
-	InputMap.add_action(action)
+	InputMap.add_action(action,.01)
 	if default_input_profile.actions.has(action.trim_suffix(idx_str)):
 		for event in default_input_profile.actions[action.trim_suffix(idx_str)].events:
 			if event is InputEventMouse or event is InputEventKey or event is InputEventAction:
@@ -384,6 +386,7 @@ func move_splitscreen_controller(from: int, to: int) -> void:
 	# Take all the controller's events and assign them to actions with the
 	# 'to' player's index
 	for i in from_stick.num_events:
+		#Console.cwrite(from_stick.events[i],"on device idx",from_stick.events[i].device,"going from",idx_str,"to",new_idx_str)
 		InputMap.action_erase_event(from_stick.event_actions[i]+idx_str,from_stick.events[i])
 		InputMap.action_add_event(from_stick.event_actions[i]+new_idx_str,from_stick.events[i])
 

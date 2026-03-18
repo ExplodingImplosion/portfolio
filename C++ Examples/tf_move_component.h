@@ -1,0 +1,84 @@
+// #include "player_character.h"
+#include "scene/3d/physics/character_body_3d.h"
+
+class TfMoveComponent: public Node {
+GDCLASS(TfMoveComponent, Node);
+public:
+CharacterBody3D* player;
+float JUMP_FORCE;
+float GROUND_DECCEL;
+float DECCEL_RAMP_UP_SPEED;
+float TERMINAL_VELOCITY;
+float GRAVITY;
+float GROUND_SPEED;
+float GROUND_ACCEL;
+float AIR_SPEED;
+float AIR_ACCEL;
+int MAX_SLIDES;
+float MAX_SLOPE_ANGLE;
+float SURF_FRAC;
+float MIN_SURF_ANGLE;
+bool CAN_HOLD_FOR_JUMP;
+float can_hold_for_jump;
+bool grounded;
+bool just_jumped;
+bool just_landed;
+bool rocket_jumping;
+bool tryna_jump;
+Vector2 input_dir;
+Vector2 aim_angle;
+void move(float delta);
+// inline Vector3 apply_friction(float delta);
+CharacterBody3D* get_player();
+void set_player(CharacterBody3D* p_player);
+float get_JUMP_FORCE();
+void set_JUMP_FORCE(float p_JUMP_FORCE);
+float get_GROUND_DECCEL();
+void set_GROUND_DECCEL(float p_GROUND_DECCEL);
+float get_DECCEL_RAMP_UP_SPEED();
+void set_DECCEL_RAMP_UP_SPEED(float p_DECCEL_RAMP_UP_SPEED);
+float get_TERMINAL_VELOCITY();
+void set_TERMINAL_VELOCITY(float p_TERMINAL_VELOCITY);
+float get_GRAVITY();
+void set_GRAVITY(float p_GRAVITY);
+float get_GROUND_SPEED();
+void set_GROUND_SPEED(float p_GROUND_SPEED);
+float get_GROUND_ACCEL();
+void set_GROUND_ACCEL(float p_GROUND_ACCEL);
+float get_AIR_SPEED();
+void set_AIR_SPEED(float p_AIR_SPEED);
+float get_AIR_ACCEL();
+void set_AIR_ACCEL(float p_AIR_ACCEL);
+int get_MAX_SLIDES();
+void set_MAX_SLIDES(int p_MAX_SLIDES);
+float get_MAX_SLOPE_ANGLE();
+void set_MAX_SLOPE_ANGLE(float p_MAX_SLOPE_ANGLE);
+float get_SURF_FRAC();
+void set_SURF_FRAC(float p_SURF_FRAC);
+float get_MIN_SURF_ANGLE();
+void set_MIN_SURF_ANGLE(float p_MIN_SURF_ANGLE);
+bool get_CAN_HOLD_FOR_JUMP();
+void set_CAN_HOLD_FOR_JUMP(bool p_CAN_HOLD_FOR_JUMP);
+float get_can_hold_for_jump();
+void set_can_hold_for_jump(float p_can_hold_for_jump);
+bool get_grounded();
+void set_grounded(bool p_grounded);
+bool get_just_jumped();
+void set_just_jumped(bool p_just_jumped);
+bool get_just_landed();
+void set_just_landed(bool p_just_landed);
+bool get_rocket_jumping();
+void set_rocket_jumping(bool p_rocket_jumping);
+bool get_tryna_jump();
+void set_tryna_jump(bool p_tryna_jump);
+Vector2 get_input_dir();
+void set_input_dir(Vector2 p_input_dir);
+Vector2 get_aim_angle();
+void set_aim_angle(Vector2 p_aim_angle);
+static void _bind_methods();
+protected:
+void _notification(int p_what);
+private:
+TfMoveComponent();
+// ~TfMoveCOmponent();
+};

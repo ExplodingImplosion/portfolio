@@ -1,4 +1,4 @@
-# portfolio
+# Portfolio
 Includes my most relevant work.
 
 # C++ Example
